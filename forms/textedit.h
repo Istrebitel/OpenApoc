@@ -18,20 +18,19 @@ class TextEdit : public Control
   private:
 	bool caretDraw;
 	int caretTimer;
-	UString text;
+	U32String text;
 	UString cursor;
 	sp<BitmapFont> font;
 	bool editing;
-	UString allowedCharacters;
+	U32String allowedCharacters;
 	size_t textMaxLength = std::string::npos;
 	void raiseEvent(FormEventType Type);
 
   protected:
 	void onRender() override;
 
-	bool isFocused() const override;
-
   public:
+	bool isFocused() const override;
 	unsigned int SelectionStart;
 	HorizontalAlignment TextHAlign;
 	VerticalAlignment TextVAlign;

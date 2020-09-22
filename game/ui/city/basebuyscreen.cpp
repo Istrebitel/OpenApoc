@@ -43,7 +43,7 @@ void BaseBuyScreen::begin()
 	text->setText(format(tr("This Building will cost $%d"), price));
 
 	form->findControlTyped<Graphic>("GRAPHIC_MINIMAP")
-	    ->setImage(BaseGraphics::drawMinimap(state, base->building));
+	    ->setImage(BaseGraphics::drawMinimap(state, *base->building));
 }
 
 void BaseBuyScreen::pause() {}
@@ -58,9 +58,10 @@ void BaseBuyScreen::eventOccurred(Event *e)
 
 	if (e->type() == EVENT_KEY_DOWN)
 	{
-		if (e->keyboard().KeyCode == SDLK_ESCAPE)
+		if (e->keyboard().KeyCode == SDLK_ESCAPE || e->keyboard().KeyCode == SDLK_RETURN ||
+		    e->keyboard().KeyCode == SDLK_KP_ENTER)
 		{
-			fw().stageQueueCommand({StageCmd::Command::POP});
+			form->findControl("BUTTON_OK")->click();
 		}
 	}
 
@@ -141,9 +142,11 @@ void BaseBuyScreen::eventOccurred(Event *e)
 						a.second->setMission(*state, AgentMission::gotoBuilding(*state, *a.second));
 					}
 				}
-				base->name = "Base " + Strings::fromInteger(state->player_bases.size() + 1);
-				state->player_bases[Base::getPrefix() +
-				                    Strings::fromInteger(state->player_bases.size() + 1)] = base;
+
+				state->baseIndex += 1;
+				base->name = "Base " + Strings::fromInteger(state->baseIndex);
+				state->player_bases[Base::getPrefix() + Strings::fromInteger(state->baseIndex)] =
+				    base;
 				base->building->base = {state.get(), base};
 
 				fw().stageQueueCommand({StageCmd::Command::REPLACE, mksp<CityView>(state)});
@@ -172,9 +175,7 @@ bool BaseBuyScreen::isTransition() { return false; }
 
 void BaseBuyScreen::renderBase()
 {
-	const Vec2<int> BASE_POS = form->Location + baseView->Location;
-
-	BaseGraphics::renderBase(BASE_POS, base);
+	BaseGraphics::renderBase(baseView->getLocationOnScreen(), *base);
 }
 
 }; // namespace OpenApoc

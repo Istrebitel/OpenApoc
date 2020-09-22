@@ -14,7 +14,9 @@ struct VehicleData
 	uint16_t image_position_4;
 	uint16_t graphic_frame;
 	uint16_t acceleration;
-	uint16_t unknown;
+	/* All dimension-capable craft have a non-zero value, I don't know what the values (1-8) then
+	 * mean... */
+	uint16_t dimension_travel;
 	uint16_t top_speed;
 	uint16_t shadow_graphic;
 	uint16_t shadow_position_1;
@@ -61,9 +63,9 @@ struct VehicleEquipmentLayoutSlot
 #define VEHICLE_EQUIPMENT_LAYOUT_SLOT_TYPE_GENERAL 0x02
 	uint8_t type;
 	uint8_t no_partial_equipment; // '1' if equipment must be fully contained within this slot (All
-                                  // weapons & engines)
-                                  // '0' if a single equipment object can
-                                  // overlap multiple slots (All 'general' equipment)
+	                              // weapons & engines)
+	                              // '0' if a single equipment object can
+	                              // overlap multiple slots (All 'general' equipment)
 #define VEHICLE_EQUIPMENT_LAYOUT_SLOT_ALIGN_LEFT 0x00
 #define VEHICLE_EQUIPMENT_LAYOUT_SLOT_ALIGN_CENTRE 0x01
 #define VEHICLE_EQUIPMENT_LAYOUT_SLOT_ALIGN_RIGHT 0x02

@@ -10,6 +10,7 @@
 #include "framework/framework.h"
 #include "framework/keycodes.h"
 #include "game/state/gamestate.h"
+#include "game/state/rules/battle/damage.h"
 #include "game/state/rules/city/facilitytype.h"
 #include "game/state/rules/city/ufopaedia.h"
 #include "game/state/rules/city/vammotype.h"
@@ -128,10 +129,27 @@ void UfopaediaCategoryView::eventOccurred(Event *e)
 
 	if (e->type() == EVENT_KEY_DOWN)
 	{
-		if (e->keyboard().KeyCode == SDLK_ESCAPE)
+		switch (e->keyboard().KeyCode)
 		{
-			fw().stageQueueCommand({StageCmd::Command::POP});
-			return;
+			case SDLK_ESCAPE:
+			case SDLK_RETURN:
+			case SDLK_KP_ENTER:
+				menuform->findControl("BUTTON_QUIT")->click();
+				return;
+			case SDLK_UP:
+				setNextSection();
+				return;
+			case SDLK_DOWN:
+				setPreviousSection();
+				return;
+			case SDLK_RIGHT:
+				setNextTopic();
+				return;
+			case SDLK_LEFT:
+				setPreviousTopic();
+				return;
+			default:
+				break;
 		}
 	}
 
@@ -142,91 +160,23 @@ void UfopaediaCategoryView::eventOccurred(Event *e)
 			fw().stageQueueCommand({StageCmd::Command::POP});
 			return;
 		}
-		if (e->forms().RaisedBy->Name == "BUTTON_NEXT_TOPIC")
+		else if (e->forms().RaisedBy->Name == "BUTTON_NEXT_TOPIC")
 		{
-			do
-			{
-				if (this->position_iterator == this->category->entries.end())
-				{
-					this->position_iterator = this->category->entries.begin();
-				}
-				else
-				{
-					this->position_iterator++;
-				}
-				// Loop until we find the end (which shows the category intro screen)
-				// or a visible entry
-			} while (this->position_iterator != this->category->entries.end() &&
-			         !this->position_iterator->second->isVisible());
-			this->setFormData();
-			return;
+			setNextTopic();
 		}
-		if (e->forms().RaisedBy->Name == "BUTTON_PREVIOUS_TOPIC")
+		else if (e->forms().RaisedBy->Name == "BUTTON_PREVIOUS_TOPIC")
 		{
-			do
-			{
-				if (this->position_iterator == this->category->entries.begin())
-				{
-					this->position_iterator = this->category->entries.end();
-				}
-				else
-				{
-					this->position_iterator--;
-				}
-				// Loop until we find the end (which shows the category intro screen)
-				// or a visible entry
-			} while (this->position_iterator != this->category->entries.end() &&
-			         !this->position_iterator->second->isVisible());
-			this->setFormData();
-			return;
+			setPreviousTopic();
 		}
-		if (e->forms().RaisedBy->Name == "BUTTON_NEXT_SECTION")
+		else if (e->forms().RaisedBy->Name == "BUTTON_NEXT_SECTION")
 		{
-			auto it = state->ufopaedia.begin();
-			// First find myself
-			while (it->second != this->category)
-			{
-				it++;
-				if (it == state->ufopaedia.end())
-				{
-					LogError("Failed to find current category \"%s\"", this->category->title);
-				}
-			}
-			// Increment it once to get the next
-			it++;
-			// Loop around to the beginning
-			if (it == state->ufopaedia.end())
-			{
-				it = state->ufopaedia.begin();
-			}
-			fw().stageQueueCommand(
-			    {StageCmd::Command::REPLACE, mksp<UfopaediaCategoryView>(state, it->second)});
-			return;
+			setNextSection();
 		}
-		if (e->forms().RaisedBy->Name == "BUTTON_PREVIOUS_SECTION")
+		else if (e->forms().RaisedBy->Name == "BUTTON_PREVIOUS_SECTION")
 		{
-			auto it = state->ufopaedia.begin();
-			// First find myself
-			while (it->second != this->category)
-			{
-				it++;
-				if (it == state->ufopaedia.end())
-				{
-					LogError("Failed to find current category \"%s\"", this->category->title);
-				}
-			}
-			// Loop around to the beginning
-			if (it == state->ufopaedia.begin())
-			{
-				it = state->ufopaedia.end();
-			}
-			// Decrement it once to get the previous
-			it--;
-			fw().stageQueueCommand(
-			    {StageCmd::Command::REPLACE, mksp<UfopaediaCategoryView>(state, it->second)});
-			return;
+			setPreviousSection();
 		}
-		if (e->forms().RaisedBy->Name == "ENTRY_SHORTCUT")
+		else if (e->forms().RaisedBy->Name == "ENTRY_SHORTCUT")
 		{
 			auto entry = e->forms().RaisedBy->getData<UfopaediaEntry>();
 			if (!entry)
@@ -246,7 +196,7 @@ void UfopaediaCategoryView::eventOccurred(Event *e)
 			this->position_iterator = it;
 			this->setFormData();
 		}
-		if (e->forms().RaisedBy->Name == "BUTTON_INFORMATION")
+		else if (e->forms().RaisedBy->Name == "BUTTON_INFORMATION")
 		{
 			menuform->findControl("INFORMATION_PANEL")
 			    ->setVisible(!menuform->findControl("INFORMATION_PANEL")->isVisible());
@@ -352,8 +302,8 @@ void UfopaediaCategoryView::setFormStats()
 							orgValues[3]->setText(format("%d%%", ref->infiltrationValue / 2));
 						}
 					}
+					break;
 				}
-				break;
 				case UfopaediaEntry::Data::Vehicle:
 				{
 					StateRef<VehicleType> ref = {state.get(), data_id};
@@ -401,8 +351,8 @@ void UfopaediaCategoryView::setFormStats()
 					statsValues[row++]->setText(Strings::fromInteger(engineSpace));
 					statsLabels[row]->setText(tr("Equipment space"));
 					statsValues[row++]->setText(Strings::fromInteger(generalSpace));
+					break;
 				}
-				break;
 				case UfopaediaEntry::Data::VehicleEquipment:
 				{
 					StateRef<VEquipmentType> ref = {state.get(), data_id};
@@ -425,7 +375,7 @@ void UfopaediaCategoryView::setFormStats()
 							statsLabels[row]->setText(tr("Accuracy"));
 							statsValues[row++]->setText(format("%d%%", ref->accuracy));
 							statsLabels[row]->setText(tr("Range"));
-							statsValues[row++]->setText(format("%dm", ref->range));
+							statsValues[row++]->setText(format("%dm", ref->getRangeInMetres()));
 							statsLabels[row]->setText(tr("Fire Rate"));
 							statsValues[row++]->setText(format(
 							    "%.2f r/s", (float)TICKS_PER_SECOND / (float)ref->fire_delay));
@@ -479,14 +429,75 @@ void UfopaediaCategoryView::setFormStats()
 								statsValues[row++]->setText(tr("Cloaks Craft"));
 							}
 							break;
+						default:
+						{
+							LogError("Trying to read non-vehicle equipment type %s on vehicle "
+							         "equipment ufopaedia page",
+							         ref->id);
+							break;
+						}
 					}
+					break;
 				}
-				break;
 				case UfopaediaEntry::Data::Equipment:
 				{
-					// FIXME: Not implemented yet
+					StateRef<AEquipmentType> ref = {state.get(), data_id};
+					statsLabels[row]->setText(tr("Weight"));
+					statsValues[row++]->setText(Strings::fromInteger(ref->weight));
+					statsLabels[row]->setText(tr("Size"));
+					statsValues[row++]->setText(
+					    format("%dx%d", ref->equipscreen_size.x, ref->equipscreen_size.y));
+					if (ref->type == AEquipmentType::Type::Ammo ||
+					    (ref->type == AEquipmentType::Type::Weapon && ref->ammo_types.empty()))
+					{
+						statsLabels[row]->setText(tr("Power"));
+						statsValues[row++]->setText(Strings::fromInteger(ref->damage));
+						statsLabels[row]->setText(tr("Damage Type"));
+						statsValues[row++]->setText(ref->damage_type->name);
+						statsLabels[row]->setText("Range");
+						statsValues[row++]->setText(format("%dm", ref->getRangeInMetres()));
+						statsLabels[row]->setText("Fire Rate");
+						statsValues[row++]->setText(format("%.2f r/s", ref->getRoundsPerSecond()));
+					}
+					else if (ref->type == AEquipmentType::Type::Grenade)
+					{
+						statsLabels[row]->setText(tr("Power"));
+						statsValues[row++]->setText(Strings::fromInteger(ref->damage));
+						statsLabels[row]->setText(tr("Damage Type"));
+						statsValues[row++]->setText(ref->damage_type->name);
+					}
+					else if (ref->type == AEquipmentType::Type::Weapon &&
+					         ref->ammo_types.size() == 1)
+					{
+						const auto &ammoType = *ref->ammo_types.begin();
+						statsLabels[row]->setText(tr("Power"));
+						statsValues[row++]->setText(Strings::fromInteger(ammoType->damage));
+						statsLabels[row]->setText(tr("Damage Type"));
+						statsValues[row++]->setText(ammoType->damage_type->name);
+						statsLabels[row]->setText(tr("Range"));
+						statsValues[row++]->setText(format("%dm", ammoType->getRangeInMetres()));
+						statsLabels[row]->setText(tr("Fire Rate"));
+						statsValues[row++]->setText(
+						    format("%.2f r/s", ammoType->getRoundsPerSecond()));
+					}
+					else if (ref->type == AEquipmentType::Type::Weapon &&
+					         ref->ammo_types.size() > 1)
+					{
+						statsLabels[row]->setText(tr("Power"));
+						statsValues[row++]->setText(tr("Depends on clip"));
+						statsLabels[row]->setText(tr("Damage Type"));
+						statsValues[row++]->setText(tr("Depends on clip"));
+						statsLabels[row]->setText(tr("Range"));
+						statsValues[row++]->setText(tr("Depends on clip"));
+						statsLabels[row]->setText(tr("Fire Rate"));
+						statsValues[row++]->setText(tr("Depends on clip"));
+					}
+					else if (ref->type == AEquipmentType::Type::Armor)
+					{
+						// FIXME: Not implemented
+					}
+					break;
 				}
-				break;
 				case UfopaediaEntry::Data::Facility:
 				{
 					StateRef<FacilityType> ref = {state.get(), data_id};
@@ -501,13 +512,14 @@ void UfopaediaCategoryView::setFormStats()
 						statsLabels[row]->setText(tr("Capacity"));
 						statsValues[row++]->setText(Strings::fromInteger(ref->capacityAmount));
 					}
+					break;
 				}
-				break;
 				case UfopaediaEntry::Data::Building:
 				{
+					LogError("Building not implemented yet");
 					// FIXME: Not implemented yet
+					break;
 				}
-				break;
 				default:
 					break;
 			}
@@ -524,6 +536,94 @@ void UfopaediaCategoryView::setFormStats()
 	{
 		menuform->findControlTyped<Label>("TEXT_INFO")->Location.y = baseY;
 	}
+}
+
+void UfopaediaCategoryView::setNextTopic()
+{
+	do
+	{
+		if (this->position_iterator == this->category->entries.end())
+		{
+			this->position_iterator = this->category->entries.begin();
+		}
+		else
+		{
+			this->position_iterator++;
+		}
+		// Loop until we find the end (which shows the category intro screen)
+		// or a visible entry
+	} while (this->position_iterator != this->category->entries.end() &&
+	         !this->position_iterator->second->isVisible());
+	this->setFormData();
+	return;
+}
+
+void UfopaediaCategoryView::setPreviousTopic()
+{
+	do
+	{
+		if (this->position_iterator == this->category->entries.begin())
+		{
+			this->position_iterator = this->category->entries.end();
+		}
+		else
+		{
+			this->position_iterator--;
+		}
+		// Loop until we find the end (which shows the category intro screen)
+		// or a visible entry
+	} while (this->position_iterator != this->category->entries.end() &&
+	         !this->position_iterator->second->isVisible());
+	this->setFormData();
+	return;
+}
+
+void UfopaediaCategoryView::setNextSection()
+{
+	auto it = state->ufopaedia.begin();
+	// First find myself
+	while (it->second != this->category)
+	{
+		it++;
+		if (it == state->ufopaedia.end())
+		{
+			LogError("Failed to find current category \"%s\"", this->category->title);
+		}
+	}
+	// Increment it once to get the next
+	it++;
+	// Loop around to the beginning
+	if (it == state->ufopaedia.end())
+	{
+		it = state->ufopaedia.begin();
+	}
+	fw().stageQueueCommand(
+	    {StageCmd::Command::REPLACE, mksp<UfopaediaCategoryView>(state, it->second)});
+	return;
+}
+
+void UfopaediaCategoryView::setPreviousSection()
+{
+	auto it = state->ufopaedia.begin();
+	// First find myself
+	while (it->second != this->category)
+	{
+		it++;
+		if (it == state->ufopaedia.end())
+		{
+			LogError("Failed to find current category \"%s\"", this->category->title);
+		}
+	}
+	// Loop around to the beginning
+	if (it == state->ufopaedia.begin())
+	{
+		it = state->ufopaedia.end();
+	}
+	// Decrement it once to get the previous
+	it--;
+	fw().stageQueueCommand(
+	    {StageCmd::Command::REPLACE, mksp<UfopaediaCategoryView>(state, it->second)});
+	return;
 }
 
 bool UfopaediaCategoryView::isTransition() { return false; }

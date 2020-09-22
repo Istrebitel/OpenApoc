@@ -9,9 +9,8 @@ namespace OpenApoc
 {
 class Image;
 class VoxelMap;
-class SceneryTileType : public StateObject
+class SceneryTileType : public StateObject<SceneryTileType>
 {
-	STATE_OBJECT(SceneryTileType)
   public:
 	SceneryTileType() = default;
 
@@ -44,7 +43,7 @@ class SceneryTileType : public StateObject
 	sp<VoxelMap> voxelMap;
 	// FIXME: If the damaged tile links form a loop this will leak?
 	StateRef<SceneryTileType> damagedTile;
-	Vec2<float> imageOffset;
+	Vec2<float> imageOffset = {0, 0};
 	bool isLandingPad = false;
 	Colour minimap_colour;
 
@@ -69,6 +68,8 @@ class SceneryTileType : public StateObject
 	// Max value 16
 	int overlayHeight = 0;
 	bool basement = false;
+	// Only tiles with value over certain threshold are considered to be core to the building
+	bool isBuildingPart = false;
 	// Does not receive attacks and is not considered hostile action if receives stray shots
 	bool commonProperty = false;
 

@@ -22,6 +22,7 @@ enum class FormEventType
 	KeyPress,
 	KeyUp,
 	TextInput,
+	ToolTip,
 
 	ButtonClick,
 	CheckBoxChange,
@@ -34,6 +35,7 @@ enum class FormEventType
 	ScrollBarChange,
 	TextChanged,
 	TextEditFinish,
+	TextEditCancel,
 	ListBoxChangeHover,
 	ListBoxChangeSelected
 };

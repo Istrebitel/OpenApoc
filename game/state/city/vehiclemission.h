@@ -14,7 +14,6 @@ namespace OpenApoc
 {
 
 static const int TELEPORTER_SPREAD = 10;
-static const int SELF_DESTRUCT_TIMER = 12 * TICKS_PER_HOUR;
 static const int DIMENSION_GATE_DELAY = TICKS_PER_SECOND / 2;
 static const int FOLLOW_BOUNDS_XY = 4;
 static const int FOLLOW_BOUNDS_Z = 1;
@@ -26,24 +25,19 @@ class Vehicle;
 class Tile;
 class TileMap;
 class Building;
-class UString;
 class City;
 
 class FlyingVehicleTileHelper : public CanEnterTileHelper
 {
   private:
 	TileMap &map;
-	VehicleType::Type type;
-	bool crashed;
+	const Vehicle &v;
 	Vec2<int> size;
 	bool large;
 	int altitude;
 
   public:
-	FlyingVehicleTileHelper(TileMap &map, Vehicle &v);
-	FlyingVehicleTileHelper(TileMap &map, VehicleType &vehType, bool crashed, int altitude);
-	FlyingVehicleTileHelper(TileMap &map, VehicleType::Type type, bool crashed, Vec2<int> size,
-	                        int altitude);
+	FlyingVehicleTileHelper(TileMap &map, const Vehicle &v);
 
 	bool canEnterTile(Tile *from, Tile *to, bool ignoreStaticUnits = false,
 	                  bool ignoreMovingUnits = true, bool ignoreAllUnits = false) const override;
@@ -75,11 +69,10 @@ class GroundVehicleTileHelper : public CanEnterTileHelper
   private:
 	TileMap &map;
 	VehicleType::Type type;
-	bool crashed;
 
   public:
 	GroundVehicleTileHelper(TileMap &map, Vehicle &v);
-	GroundVehicleTileHelper(TileMap &map, VehicleType::Type type, bool crashed);
+	GroundVehicleTileHelper(TileMap &map, VehicleType::Type type);
 
 	bool canEnterTile(Tile *from, Tile *to, bool ignoreStaticUnits = false,
 	                  bool ignoreMovingUnits = true, bool ignoreAllUnits = false) const override;
@@ -103,6 +96,66 @@ class GroundVehicleTileHelper : public CanEnterTileHelper
 	bool isMoveAllowedATV(Scenery &scenery, int dir) const;
 };
 
+class VehicleTargetHelper
+{
+  public:
+	// Is a given tile reachable by a given vehicle type?
+	enum class Reachability
+	{
+		Reachable,
+		BlockedByVehicle, // We only check for this if VehicleAvoidance is not Ignore.
+		BlockedByScenery,
+	};
+
+	// Desired target adjustment behavior when the given target tile is BlockedByVehicle.
+	enum class VehicleAvoidance
+	{
+		Ignore,          // Use given target anyway.
+		PickNearbyPoint, // Go to a nearby point instead and allow mission to finish.
+		Sidestep,        // Go to a nearby point and try to re-route to the original target.
+	};
+
+	struct AdjustTargetResult
+	{
+		// Original target point's reachability.
+		Reachability reachability;
+
+		// Whether we were able to find a suitable target point. This is false only in extreme cases
+		// where there was no room in the sky, no roads in the city, etc.
+		bool foundSuitableTarget;
+	};
+
+	// Potentially modifies the given target location such that it is reachable for the given
+	// vehicle. Args:
+	//   state: Game state.
+	//   vehicle: Vehicle, only used for looking up the type.
+	//   target: Reference to target location, may be modified by this method.
+	//   vehicleAvoidance: Vehicle avoidance strategy. Only relevant for flyers and UFOs. See enum
+	//   above. adjustForFlying: If false, don't do any checks or adjustment for flyers and UFOs.
+	// Returns: AdjustTargetResult, see above for details.
+	static AdjustTargetResult adjustTargetToClosest(GameState &state, Vehicle &v, Vec3<int> &target,
+	                                                const VehicleAvoidance vehicleAvoidance,
+	                                                bool adjustForFlying);
+
+	// Checks reachability of the target location for the given vehicle.
+	// Args:
+	//   vehicle: Vehicle, only used for looking up the type.
+	//   target: Location to be checked for reachability.
+	// Returns: Reachability, see above for details.
+	static Reachability isReachableTarget(const Vehicle &v, Vec3<int> target);
+
+  private:
+	static AdjustTargetResult adjustTargetToClosestFlying(GameState &state, Vehicle &v,
+	                                                      Vec3<int> &target,
+	                                                      const VehicleAvoidance vehicleAvoidance);
+	static AdjustTargetResult adjustTargetToClosestRoad(Vehicle &v, Vec3<int> &target);
+	static AdjustTargetResult adjustTargetToClosestGround(Vehicle &v, Vec3<int> &target);
+
+	static Reachability isReachableTargetFlying(const Vehicle &v, Vec3<int> target);
+	static Reachability isReachableTargetRoad(const Vehicle &v, Vec3<int> target);
+	static Reachability isReachableTargetGround(const Vehicle &v, Vec3<int> target);
+};
+
 class VehicleMission
 {
   private:
@@ -114,17 +167,6 @@ class VehicleMission
 	// If it is finished, update() is called by isFinished so that any remaining work could be done
 	bool isFinishedInternal(GameState &state, Vehicle &v);
 
-	// Adjusts target to match closest tile valid for road vehicles
-	static bool adjustTargetToClosestRoad(Vehicle &v, Vec3<int> &target);
-	// Adjusts target to match closest tile valid for ATVs
-	static bool adjustTargetToClosestGround(Vehicle &v, Vec3<int> &target);
-	// Adjusts target to match closest tile valid for Flyers
-	// Ignore vehicles short version
-	static bool adjustTargetToClosestFlying(GameState &state, Vehicle &v, Vec3<int> &target);
-	// Adjusts target to match closest tile valid for Flyers
-	static bool adjustTargetToClosestFlying(GameState &state, Vehicle &v, Vec3<int> &target,
-	                                        bool ignoreVehicles, bool pickNearest,
-	                                        bool &pickedNearest);
 	bool takeOffCheck(GameState &state, Vehicle &v);
 	bool teleportCheck(GameState &state, Vehicle &v);
 
@@ -148,6 +190,7 @@ class VehicleMission
 	bool acquireTargetBuilding(GameState &state, Vehicle &v);
 	void updateTimer(unsigned ticks);
 	void takePositionNearPortal(GameState &state, Vehicle &v);
+	static bool canRecoverVehicle(const GameState &state, const Vehicle &v, const Vehicle &target);
 
 	// Methods to create new missions
 
@@ -181,6 +224,9 @@ class VehicleMission
 	static VehicleMission *patrol(GameState &state, Vehicle &v, bool home = false,
 	                              unsigned int counter = 10);
 	static VehicleMission *teleport(GameState &state, Vehicle &v, Vec3<int> target = {-1, -1, -1});
+	static VehicleMission *investigateBuilding(GameState &state, Vehicle &v,
+	                                           StateRef<Building> target,
+	                                           bool allowTeleporter = false);
 	UString getName();
 
 	enum class MissionType
@@ -203,7 +249,8 @@ class VehicleMission
 		Teleport,
 		SelfDestruct,
 		DepartToSpace,
-		ArriveFromDimensionGate
+		ArriveFromDimensionGate,
+		InvestigateBuilding,
 	};
 
 	MissionType type = MissionType::GotoLocation;

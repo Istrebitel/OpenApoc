@@ -45,12 +45,8 @@ class AEquipScreen : public Stage
 	sp<Agent> firstAgent;
 
 	sp<Form> formMain;
-	sp<Form> formActive;
 	sp<Form> formAgentStats;
-	sp<Form> formItemWeapon;
-	sp<Form> formItemArmor;
-	sp<Form> formItemGrenade;
-	sp<Form> formItemOther;
+	sp<Form> formAgentItem;
 
 	sp<Palette> pal;
 	sp<GameState> state;
@@ -88,7 +84,7 @@ class AEquipScreen : public Stage
 	bool modifierLShift = false;
 	bool modifierRShift = false;
 
-	// Checks wether agent should be displayed in the agent list
+	// Checks whether agent should be displayed in the agent list
 	bool checkAgent(sp<Agent> agent, sp<Organisation> owner);
 	void updateAgents();
 	void updateAgentControl(sp<Agent> agent);
@@ -124,7 +120,7 @@ class AEquipScreen : public Stage
 	bool tryPickUpItem(sp<Agent> agent, Vec2<int> slotPos, bool alternative,
 	                   bool *alienArtifact = nullptr, bool forced = false);
 	bool tryPickUpItem(Vec2<int> inventoryPos, bool *alienArtifact = nullptr);
-	bool tryPickUpItem(sp<AEquipmentType> item);
+	bool tryPickUpItem(const AEquipmentType &item);
 	void pickUpItem(sp<AEquipment> item);
 	bool tryPlaceItem(sp<Agent> agent, Vec2<int> slotPos, bool *insufficientTU = nullptr,
 	                  bool *alienArtifact = nullptr);
@@ -140,12 +136,11 @@ class AEquipScreen : public Stage
 	StateRef<Vehicle> getAgentVehicle(sp<Agent> agent);
 	StateRef<Base> getAgentBase(sp<Agent> agent);
 
+	bool isTurnBased() const;
+
   public:
 	AEquipScreen(sp<GameState> state, sp<Agent> firstAgent = nullptr);
 	~AEquipScreen() override;
-
-	static void outputAgent(sp<Agent> agent, sp<Form> formAgentStats, std::vector<sp<Image>> &ranks,
-	                        bool turnBased);
 
 	void begin() override;
 	void pause() override;

@@ -4,11 +4,6 @@
 #include "framework/image.h"
 #include "library/sp.h"
 
-// Disable automatic #pragma linking for boost - only enabled in msvc and that should provide boost
-// symbols as part of the module that uses it
-#define BOOST_ALL_NO_LIB
-#include <boost/locale.hpp>
-
 namespace OpenApoc
 {
 
@@ -26,12 +21,10 @@ sp<PaletteImage> BitmapFont::getString(const UString &Text)
 
 	img = mksp<PaletteImage>(Vec2<int>{width, height});
 
-	auto u8Str = Text.str();
-	auto pointString = boost::locale::conv::utf_to_utf<UniChar>(u8Str);
+	auto u32Text = to_u32string(Text);
 
-	for (size_t i = 0; i < pointString.length(); i++)
+	for (const auto &c : u32Text)
 	{
-		UniChar c = pointString[i];
 		auto glyph = this->getGlyph(c);
 		PaletteImage::blit(glyph, img, {0, 0}, {pos, 0});
 		pos += glyph->size.x;
@@ -45,12 +38,12 @@ sp<PaletteImage> BitmapFont::getString(const UString &Text)
 int BitmapFont::getFontWidth(const UString &Text)
 {
 	int textlen = 0;
-	auto u8Str = Text.str();
-	auto pointString = boost::locale::conv::utf_to_utf<UniChar>(u8Str);
 
-	for (size_t i = 0; i < Text.length(); i++)
+	auto u32Text = to_u32string(Text);
+
+	for (const auto &c : u32Text)
 	{
-		auto glyph = this->getGlyph(pointString[i]);
+		auto glyph = this->getGlyph(c);
 		textlen += glyph->size.x;
 	}
 	return textlen;
@@ -71,15 +64,15 @@ int BitmapFont::getEstimateCharacters(int FitInWidth) const
 	return FitInWidth / averagecharacterwidth;
 }
 
-sp<PaletteImage> BitmapFont::getGlyph(UniChar codepoint)
+sp<PaletteImage> BitmapFont::getGlyph(char32_t codepoint)
 {
 	if (fontbitmaps.find(codepoint) == fontbitmaps.end())
 	{
 		// FIXME: Hack - assume all missing glyphs are spaces
 		// TODO: Fallback fonts?
 		LogWarning("Font %s missing glyph for character \"%s\" (codepoint %u)", this->getName(),
-		           UString(codepoint), codepoint);
-		auto missingGlyph = this->getGlyph(UString::u8Char(' '));
+		           to_ustring(std::u32string(1, codepoint)), static_cast<uint32_t>(codepoint));
+		auto missingGlyph = this->getGlyph(to_char32(' '));
 		fontbitmaps.emplace(codepoint, missingGlyph);
 	}
 	return fontbitmaps[codepoint];
@@ -87,13 +80,15 @@ sp<PaletteImage> BitmapFont::getGlyph(UniChar codepoint)
 
 sp<Palette> BitmapFont::getPalette() const { return this->palette; }
 
-sp<BitmapFont> BitmapFont::loadFont(const std::map<UniChar, UString> &glyphMap, int spaceWidth,
-                                    int fontHeight, UString fontName, sp<Palette> defaultPalette)
+sp<BitmapFont> BitmapFont::loadFont(const std::map<char32_t, UString> &glyphMap, int spaceWidth,
+                                    int fontHeight, int kerning, UString fontName,
+                                    sp<Palette> defaultPalette)
 {
 	auto font = mksp<BitmapFont>();
 
 	font->spacewidth = spaceWidth;
 	font->fontheight = fontHeight;
+	font->kerning = kerning;
 	font->averagecharacterwidth = 0;
 	font->name = fontName;
 	font->palette = defaultPalette;
@@ -132,8 +127,8 @@ sp<BitmapFont> BitmapFont::loadFont(const std::map<UniChar, UString> &glyphMap, 
 				}
 			}
 		}
-		// Trim the glyph to the max non-transparent width + 2 px
-		auto trimmedGlyph = mksp<PaletteImage>(Vec2<int>{maxWidth + 2, fontHeight});
+		// Trim the glyph to the max non-transparent width
+		auto trimmedGlyph = mksp<PaletteImage>(Vec2<int>{maxWidth + kerning, fontHeight});
 		PaletteImage::blit(paletteImage, trimmedGlyph);
 
 		font->fontbitmaps[p.first] = trimmedGlyph;
@@ -145,7 +140,7 @@ sp<BitmapFont> BitmapFont::loadFont(const std::map<UniChar, UString> &glyphMap, 
 	// Always add a 'space' image:
 
 	auto spaceImage = mksp<PaletteImage>(Vec2<int>{spaceWidth, fontHeight});
-	font->fontbitmaps[UString::u8Char(' ')] = spaceImage;
+	font->fontbitmaps[to_char32(' ')] = spaceImage;
 
 	return font;
 }
@@ -153,16 +148,18 @@ sp<BitmapFont> BitmapFont::loadFont(const std::map<UniChar, UString> &glyphMap, 
 std::list<UString> BitmapFont::wordWrapText(const UString &Text, int MaxWidth)
 {
 	int txtwidth;
-	std::list<UString> lines = Text.splitlist("\n");
+	auto lines = split(Text, "\n");
 	std::list<UString> wrappedLines;
 
-	for (UString str : lines)
+	for (const UString &str : lines)
 	{
 		txtwidth = getFontWidth(str);
 
 		if (txtwidth > MaxWidth)
 		{
-			auto remainingChunks = str.splitlist(" ");
+			auto remainingChunksVector = split(str, " ");
+			auto remainingChunks =
+			    std::list<UString>(remainingChunksVector.begin(), remainingChunksVector.end());
 			UString currentLine;
 
 			while (!remainingChunks.empty())

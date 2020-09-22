@@ -7,12 +7,11 @@
 namespace OpenApoc
 {
 
-UString BattleUnitAnimationPack::getAnimationPackPath()
-{
-	return fw().getDataDir() + "/animationpacks";
-}
+UString BattleUnitAnimationPack::getAnimationPackPath() { return "/animationpacks"; }
 
-sp<BattleUnitAnimationPack> BattleUnitAnimationPack::get(const GameState &state, const UString &id)
+template <>
+sp<BattleUnitAnimationPack> StateObject<BattleUnitAnimationPack>::get(const GameState &state,
+                                                                      const UString &id)
 {
 	auto it = state.battle_unit_animation_packs.find(id);
 	if (it == state.battle_unit_animation_packs.end())
@@ -23,18 +22,19 @@ sp<BattleUnitAnimationPack> BattleUnitAnimationPack::get(const GameState &state,
 	return it->second;
 }
 
-const UString &BattleUnitAnimationPack::getPrefix()
+template <> const UString &StateObject<BattleUnitAnimationPack>::getPrefix()
 {
 	static UString prefix = "BATTLEUNITIANIMATIONPACK_";
 	return prefix;
 }
-const UString &BattleUnitAnimationPack::getTypeName()
+template <> const UString &StateObject<BattleUnitAnimationPack>::getTypeName()
 {
 	static UString name = "BattleUnitAnimationPack";
 	return name;
 }
-const UString &BattleUnitAnimationPack::getId(const GameState &state,
-                                              const sp<BattleUnitAnimationPack> ptr)
+template <>
+const UString &StateObject<BattleUnitAnimationPack>::getId(const GameState &state,
+                                                           const sp<BattleUnitAnimationPack> ptr)
 {
 	static const UString emptyString = "";
 	for (auto &a : state.battle_unit_animation_packs)
@@ -42,7 +42,7 @@ const UString &BattleUnitAnimationPack::getId(const GameState &state,
 		if (a.second == ptr)
 			return a.first;
 	}
-	LogError("No BattleUnitAnimationPack matching pointer %p", ptr.get());
+	LogError("No BattleUnitAnimationPack matching pointer %p", static_cast<void *>(ptr.get()));
 	return emptyString;
 }
 
@@ -61,8 +61,7 @@ BattleUnitAnimationPack::AnimationEntry::Frame::InfoBlock::InfoBlock(int index, 
     : // We're used to subtracting offests from positions, but vanilla uses an offset that should be
       // added
       // therefore, we flip the sign here
-      index(index),
-      offset(Vec2<float>{-offset_x, -offset_y})
+      index(index), offset(Vec2<float>{-offset_x, -offset_y})
 {
 }
 
@@ -455,4 +454,4 @@ void BattleUnitAnimationPack::drawUnit(
 		}
 	}
 }
-}
+} // namespace OpenApoc

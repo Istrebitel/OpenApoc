@@ -1,9 +1,13 @@
 #include "game/ui/general/difficultymenu.h"
 #include "forms/form.h"
 #include "forms/ui.h"
+#include "framework/configfile.h"
+#include "framework/data.h"
 #include "framework/event.h"
 #include "framework/framework.h"
 #include "framework/keycodes.h"
+#include "framework/modinfo.h"
+#include "framework/options.h"
 #include "game/state/city/city.h"
 #include "game/state/gamestate.h"
 #include "game/ui/general/loadingscreen.h"
@@ -27,23 +31,14 @@ void DifficultyMenu::resume() {}
 
 void DifficultyMenu::finish() {}
 
-std::shared_future<void> loadGame(const UString &path, sp<GameState> state)
+std::shared_future<void> loadGame(sp<GameState> state)
 {
-	auto loadTask = fw().threadPoolEnqueue([path, state]() -> void {
-		if (!state->loadGame(fw().getDataDir() + "/gamestate_common"))
-		{
-			LogError("Failed to load common gamestate");
-			return;
-		}
-		if (!state->loadGame(fw().getDataDir() + "/" + path))
-		{
-			LogError("Failed to load '%s'", path);
-			return;
-		}
+	auto loadTask = fw().threadPoolEnqueue([state]() -> void {
+		state->loadMods();
 		state->startGame();
 		state->initState();
-		state->fillOrgStartingProperty();
 		state->fillPlayerStartingProperty();
+		state->fillOrgStartingProperty();
 		return;
 	});
 
@@ -65,26 +60,26 @@ void DifficultyMenu::eventOccurred(Event *e)
 
 	if (e->type() == EVENT_FORM_INTERACTION && e->forms().EventFlag == FormEventType::ButtonClick)
 	{
-		UString initialStatePath;
+		int difficulty;
 		if (e->forms().RaisedBy->Name.compare("BUTTON_DIFFICULTY1") == 0)
 		{
-			initialStatePath = "difficulty1_patched";
+			difficulty = 0;
 		}
 		else if (e->forms().RaisedBy->Name.compare("BUTTON_DIFFICULTY2") == 0)
 		{
-			initialStatePath = "difficulty2_patched";
+			difficulty = 1;
 		}
 		else if (e->forms().RaisedBy->Name.compare("BUTTON_DIFFICULTY3") == 0)
 		{
-			initialStatePath = "difficulty3_patched";
+			difficulty = 2;
 		}
 		else if (e->forms().RaisedBy->Name.compare("BUTTON_DIFFICULTY4") == 0)
 		{
-			initialStatePath = "difficulty4_patched";
+			difficulty = 3;
 		}
 		else if (e->forms().RaisedBy->Name.compare("BUTTON_DIFFICULTY5") == 0)
 		{
-			initialStatePath = "difficulty5_patched";
+			difficulty = 4;
 		}
 		else
 		{
@@ -93,10 +88,11 @@ void DifficultyMenu::eventOccurred(Event *e)
 		}
 
 		auto loadedState = mksp<GameState>();
+		loadedState->difficulty = difficulty;
 
 		fw().stageQueueCommand(
 		    {StageCmd::Command::PUSH,
-		     mksp<LoadingScreen>(nullptr, loadGame(initialStatePath, loadedState),
+		     mksp<LoadingScreen>(nullptr, loadGame(loadedState),
 		                         [loadedState]() { return mksp<CityView>(loadedState); })});
 		return;
 	}

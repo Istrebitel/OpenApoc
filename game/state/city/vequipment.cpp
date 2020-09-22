@@ -1,10 +1,12 @@
 #include "game/state/city/vequipment.h"
+#include "framework/configfile.h"
 #include "framework/framework.h"
 #include "framework/logger.h"
 #include "framework/sound.h"
 #include "game/state/city/base.h"
 #include "game/state/city/city.h"
 #include "game/state/city/vehicle.h"
+#include "game/state/gameevent.h"
 #include "game/state/gamestate.h"
 #include "game/state/rules/city/citycommonimagelist.h"
 #include "game/state/rules/city/vammotype.h"
@@ -67,7 +69,11 @@ bool VEquipment::fire(GameState &state, Vec3<float> targetPosition, Vec3<float> 
 	this->weaponState = WeaponState::Reloading;
 	if (this->type->max_ammo != 0)
 	{
-		this->ammo--;
+		if (!config().getBool("OpenApoc.Cheat.InfiniteAmmo") ||
+		    this->owner->owner != state.getPlayer())
+		{
+			this->ammo--;
+		}
 	}
 
 	if (type->fire_sfx)
@@ -138,8 +144,30 @@ void VEquipment::update(int ticks)
 	}
 }
 
+void VEquipment::noAmmoToReload(const GameState &state [[maybe_unused]],
+                                const VEquipment *equipment) const
+{
+	switch (equipment->type->type)
+	{
+		case EquipmentSlotType::VehicleEngine:
+			LogInfo("Failed to refuel engine: %s", owner->name);
+			fw().pushEvent(new GameVehicleEvent(GameEventType::NotEnoughFuel, owner));
+			break;
+		case EquipmentSlotType::VehicleWeapon:
+			LogInfo("Failed to rearm weapon: %s", owner->name);
+			fw().pushEvent(new GameVehicleEvent(GameEventType::NotEnoughAmmo, owner));
+			break;
+		case EquipmentSlotType::VehicleGeneral:
+			LogWarning("We should not try to reload VehicleGeneral Equipment");
+			break;
+		default:
+			break;
+	}
+}
+
 int VEquipment::reload(int ammoAvailable)
 {
+	// TODO implement proper reloading speed. Now it is instant
 	int ammoRequired = this->type->max_ammo - this->ammo;
 	int reloadAmount = std::min(ammoRequired, ammoAvailable);
 	this->ammo += reloadAmount;
@@ -161,7 +189,17 @@ bool VEquipment::reload(GameState &state, StateRef<Base> base)
 		int ammoAvailable = base->inventoryVehicleAmmo[type->ammo_type.id];
 		auto ammoSpent = reload(ammoAvailable);
 		base->inventoryVehicleAmmo[type->ammo_type.id] -= ammoSpent;
-		return ammoSpent > 0;
+		int ammoAfterReload = base->inventoryVehicleAmmo[type->ammo_type.id];
+		// If we run out of ammo/fuel
+		if (ammoAfterReload == 0 && ammoSpent > 0)
+		{
+			noAmmoToReload(state, this);
+			return false;
+		}
+		else
+		{
+			return ammoSpent > 0;
+		}
 	}
 	else
 	{
@@ -176,7 +214,7 @@ void VEquipment::equipFromBase(GameState &state, StateRef<Base> base)
 	reload(state, base);
 }
 
-void VEquipment::unequipToBase(GameState &state, StateRef<Base> base)
+void VEquipment::unequipToBase(GameState &state [[maybe_unused]], StateRef<Base> base)
 {
 	base->inventoryVehicleEquipment[type.id]++;
 	if (ammo > 0 && type->ammo_type)

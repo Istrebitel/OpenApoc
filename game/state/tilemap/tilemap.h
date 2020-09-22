@@ -12,13 +12,20 @@
 #include <set>
 #include <vector>
 
-#define VELOCITY_SCALE_CITY (Vec3<float>{32, 32, 16})
-#define VELOCITY_SCALE_BATTLE (Vec3<float>{24, 24, 20})
+static constexpr float VELOCITY_SCALE_CITY_X = 32.0f;
+static constexpr float VELOCITY_SCALE_CITY_Y = 32.0f;
+static constexpr float VELOCITY_SCALE_CITY_Z = 16.0f;
+static const OpenApoc::Vec3<float> VELOCITY_SCALE_CITY{VELOCITY_SCALE_CITY_X, VELOCITY_SCALE_CITY_Y,
+                                                       VELOCITY_SCALE_CITY_Z};
+
+static constexpr float VELOCITY_SCALE_BATTLE_X = 24;
+static constexpr float VELOCITY_SCALE_BATTLE_Y = 24;
+static constexpr float VELOCITY_SCALE_BATTLE_Z = 20;
+static const OpenApoc::Vec3<float> VELOCITY_SCALE_BATTLE{
+    VELOCITY_SCALE_BATTLE_X, VELOCITY_SCALE_BATTLE_Y, VELOCITY_SCALE_BATTLE_Z};
 
 namespace OpenApoc
 {
-
-static const Colour COLOUR_BLACK = {0, 0, 0, 255};
 
 // FIXME: Alexey Andronov: Does anyone know why we divide by 4 here?
 static const unsigned TICK_SCALE = TICKS_PER_SECOND / 4;
@@ -78,6 +85,17 @@ class TileMap
 	std::vector<std::set<TileObject::Type>> layerMap;
 
   public:
+	const bool isTileInBounds(int x, int y, int z) const
+	{
+		if (x < 0 || x >= size.x)
+			return false;
+		if (y < 0 || y >= size.y)
+			return false;
+		if (z < 0 || z >= size.z)
+			return false;
+		return true;
+	}
+	const bool isTileInBounds(Vec3<int> pos) const { return isTileInBounds(pos.x, pos.y, pos.z); }
 	const Tile *getTile(int x, int y, int z) const
 	{
 
@@ -150,7 +168,7 @@ class TileMap
 	                          Vec3<float> targetVectorXY, float velocityXY, float velocityZ) const;
 
 	void addObjectToMap(sp<Projectile>);
-	void addObjectToMap(sp<Vehicle>);
+	void addObjectToMap(GameState &state, sp<Vehicle>);
 	void addObjectToMap(sp<Scenery>);
 	void addObjectToMap(sp<Doodad>);
 	void addObjectToMap(sp<BattleMapPart>);

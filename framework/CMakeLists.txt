@@ -2,22 +2,21 @@
 PROJECT(OpenApoc_Framework CXX C)
 
 # check cmake version
-CMAKE_MINIMUM_REQUIRED(VERSION 3.1)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.9)
 
-include(cotire)
-
-option(BACKTRACE_ON_ERROR "Print backtrace on logging an error (Requires libunwind on linux, no extra dependencies on windows)" ON)
 option(DIALOG_ON_ERROR "Pop up a dialog box showing errors" ON)
 
 
-set (FRAMEWORK_SOURCE_FILES 
+set (FRAMEWORK_SOURCE_FILES
 	configfile.cpp
 	data.cpp
 	event.cpp
 	font.cpp
 	framework.cpp
 	image.cpp
+	jukebox.cpp
 	logger.cpp
+	luaframework.cpp
 	palette.cpp
 	physfs_fs.cpp
 	renderer.cpp
@@ -27,8 +26,11 @@ set (FRAMEWORK_SOURCE_FILES
 	serialization/providers/zipdataprovider.cpp
 	sound.cpp
 	stagestack.cpp
-	trace.cpp
-	video/smk.cpp)
+	video/smk.cpp
+	logger_sdldialog.cpp
+	logger_file.cpp
+	options.cpp
+	modinfo.cpp)
 
 source_group(framework\\sources FILES ${FRAMEWORK_SOURCE_FILES})
 list(APPEND ALL_SOURCE_FILES ${FRAMEWORK_SOURCE_FILES})
@@ -43,8 +45,10 @@ set (FRAMEWORK_HEADER_FILES
 	fs.h
 	image.h
 	imageloader_interface.h
+	jukebox.h
 	keycodes.h
 	logger.h
+	luaframework.h
 	musicloader_interface.h
 	palette.h
 	renderer.h
@@ -59,9 +63,12 @@ set (FRAMEWORK_HEADER_FILES
 	sound_interface.h
 	stage.h
 	stagestack.h
-	trace.h
 	ThreadPool/ThreadPool.h
-	video.h)
+	video.h
+	logger_sdldialog.h
+	logger_file.h
+	options.h
+	modinfo.h)
 
 source_group(framework\\headers FILES ${FRAMEWORK_HEADER_FILES})
 list(APPEND ALL_HEADER_FILES ${FRAMEWORK_HEADER_FILES})
@@ -107,7 +114,8 @@ source_group(framework\\imageloader\\headers FILES
 list(APPEND ALL_HEADER_FILES ${IMAGELOADER_HEADER_FILES})
 
 set (SAMPLELOADER_SOURCE_FILES
-	sampleloader/rawsound.cpp)
+	sampleloader/rawsound.cpp
+	sampleloader/wavsound.cpp)
 
 source_group(framework\\sampleloader\\sources FILES
 		${SAMPLELOADER_SOURCE_FILES})
@@ -120,7 +128,8 @@ source_group(framework\\sampleloader\\headers FILES
 list(APPEND ALL_HEADER_FILES ${SAMPLELOADER_HEADER_FILES})
 
 set (MUSICLOADER_SOURCE_FILES
-	musicloader/music.cpp)
+	musicloader/music.cpp
+	musicloader/vorbis.cpp)
 
 source_group(framework\\musicloader\\sources FILES
 		${MUSICLOADER_SOURCE_FILES})
@@ -189,8 +198,6 @@ add_library(OpenApoc_Framework STATIC
 	${RENDERER_SOURCE_FILES} ${RENDERER_HEADER_FILES}
 	${FILESYSTEM_SOURCE_FILES} ${FILESYSTEM_HEADER_FILES})
 
-set_property(TARGET OpenApoc_Framework PROPERTY CXX_STANDARD 11)
-
 target_compile_definitions(OpenApoc_Framework PUBLIC
 		"-DRENDERERS=\"GLES_3_0:GL_2_0\"")
 
@@ -200,8 +207,8 @@ if(APPLE)
 	# OSX doesn't seem to support the c++11 'thread_local' keyword
 	target_compile_definitions(OpenApoc_Framework PRIVATE
 			"-DBROKEN_THREAD_LOCAL")
-	# Disable libunwind use on Apple
-	SET(BACKTRACE_ON_ERROR OFF CACHE BOOL "Print backtrace on logging an error (Requires libunwind on linux, no extra dependencies on windows)" FORCE)
+elseif(WIN32)
+	target_compile_definitions(OpenApoc_Framework PRIVATE "-DGLESWRAP_PLATFORM_WGL")
 else()
 	target_compile_definitions(OpenApoc_Framework PRIVATE "-DGLESWRAP_PLATFORM_GLX")
 endif()
@@ -210,27 +217,34 @@ endif()
 # serialization
 
 set(BOOST_PACKAGES locale system program_options)
+# Arbitrary version that I remember testing previously
+set(BOOST_VERSION 1.50)
 
-set(USE_EXPERIMENTAL_FILESYSTEM FALSE)
+set(USE_STD_FILESYSTEM FALSE)
 
 if(CMAKE_COMPILER_IS_GNUCC)
-		if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 5.3 OR
-						CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL 5.3)
-				set(USE_EXPERIMENTAL_FILESYSTEM TRUE)
-		endif()
+    if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 8.0)
+			set(USE_STD_FILESYSTEM TRUE)
+	endif()
+endif()
+if(MSVC)
+	if (MSVC_VERSION GREATER_EQUAL 1910)
+		set(USE_STD_FILESYSTEM TRUE)
+	endif()
 endif()
 
-if (USE_EXPERIMENTAL_FILESYSTEM)
-	message(STATUS "Using <experimental/filesystem>")
-	target_compile_definitions(OpenApoc_Framework PUBLIC "-DUSE_EXPERIMENTAL_FILESYSTEM")
-	target_link_libraries(OpenApoc_Framework PUBLIC stdc++fs)
+if(USE_STD_FILESYSTEM)
+    message(STATUS "Using <filesystem>")
+	target_compile_definitions(OpenApoc_Framework PUBLIC "-DUSE_STD_FILESYSTEM")
 else()
 	message(STATUS "Using <boost/filesystem>")
 	set(BOOST_PACKAGES ${BOOST_PACKAGES} filesystem)
+	# filesystem::relative() didn't exist until 1.60 from what I can see in the docs
+	set(BOOST_VERSION 1.60)
 	target_compile_definitions(OpenApoc_Framework PUBLIC "-DUSE_BOOST_FILESYSTEM")
 endif()
 
-find_package(Boost REQUIRED COMPONENTS ${BOOST_PACKAGES})
+find_package(Boost ${BOOST_VERSION} REQUIRED COMPONENTS ${BOOST_PACKAGES})
 target_link_libraries(OpenApoc_Framework PUBLIC ${Boost_LIBRARIES})
 target_include_directories(OpenApoc_Framework PUBLIC ${Boost_INCLUDE_DIRS})
 
@@ -239,46 +253,42 @@ target_link_libraries(OpenApoc_Framework PUBLIC ${CMAKE_THREAD_LIBS_INIT})
 
 target_include_directories(OpenApoc_Framework PUBLIC ${GLM_INCLIDE_DIR})
 
-find_package(PkgConfig)
-
 #Require SDL2 for input/graphics/sound/pretty much everything
-pkg_check_modules(PC_SDL2 REQUIRED sdl2>=2.0)
-if (NOT PC_SDL2_FOUND)
-		message(FATAL_ERROR "sdl2 not found")
+if(WIN32)
+	find_package(SDL2 CONFIG REQUIRED)
+	target_link_libraries(OpenApoc_Framework PUBLIC SDL2::SDL2 SDL2::SDL2main)
+	#Workaround vcpkg bug
+	set_target_properties(SDL2::SDL2 SDL2::SDL2main PROPERTIES
+		MAP_IMPORTED_CONFIG_MINSIZEREL Release
+		MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
+	)
+else()
+	find_package(PkgConfig)
+	pkg_check_modules(PC_SDL2 REQUIRED sdl2>=2.0)
+	if (NOT PC_SDL2_FOUND)
+			message(FATAL_ERROR "sdl2 not found")
+	endif()
+	foreach (SDL2_LIB ${PC_SDL2_LIBRARIES})
+			message("Searching for ${SDL2_LIB} in ${PC_SDL2_LIBRARY_DIRS}")
+			find_library(SDL2_LIBRARY_PATH-${SDL2_LIB} ${SDL2_LIB} HINTS ${PC_SDL2_LIBRARY_DIRS})
+			if (NOT SDL2_LIBRARY_PATH-${SDL2_LIB})
+					message(FATAL_ERROR "sdl2 library ${SDL2_LIB} not found in ${PC_SDL2_LIBRARY_DIRS}")
+			endif()
+			message("Found ${SDL2_LIB} at ${SDL2_LIBRARY_PATH-${SDL2_LIB}}")
+			target_link_libraries(OpenApoc_Framework PUBLIC ${SDL2_LIBRARY_PATH-${SDL2_LIB}})
+	endforeach()
+	target_include_directories(OpenApoc_Framework PUBLIC ${PC_SDL2_INCLUDE_DIRS})
 endif()
-foreach (SDL2_LIB ${PC_SDL2_LIBRARIES})
-		message("Searching for ${SDL2_LIB} in ${PC_SDL2_LIBRARY_DIRS}")
-		find_library(SDL2_LIBRARY_PATH-${SDL2_LIB} ${SDL2_LIB} HINTS ${PC_SDL2_LIBRARY_DIRS})
-		if (NOT SDL2_LIBRARY_PATH-${SDL2_LIB})
-				message(FATAL_ERROR "sdl2 library ${SDL2_LIB} not found in ${PC_SDL2_LIBRARY_DIRS}")
-		endif()
-		message("Found ${SDL2_LIB} at ${SDL2_LIBRARY_PATH-${SDL2_LIB}}")
-		target_link_libraries(OpenApoc_Framework PUBLIC ${SDL2_LIB})
-endforeach()
-target_include_directories(OpenApoc_Framework PUBLIC ${PC_SDL2_INCLUDE_DIRS})
+
+find_path(VORBIS_INCLUDE_DIR vorbis/vorbisfile.h)
+find_library(VORBISFILE_LIBRARY vorbisfile)
+
+target_include_directories(OpenApoc_Framework PRIVATE ${VORBIS_INCLUDE_DIR})
+target_link_libraries(OpenApoc_Framework PRIVATE ${VORBISFILE_LIBRARY})
 
 # Dialog is handled by SDL2
 if(DIALOG_ON_ERROR)
-		target_compile_definitions(OpenApoc_Framework PUBLIC -DERROR_DIALOG)
-endif()
-
-# Backtrace required libunwind
-if(BACKTRACE_ON_ERROR)
-	pkg_check_modules(PC_UNWIND libunwind)
-	if (NOT PC_UNWIND_FOUND)
-		#Ubuntu 12.04 libunwind doesn't have a pkgconfig - try 'current' paths anyway
-		find_path(UNWIND_INCLUDE_DIR libunwind.h HINTS ${FRAMEWORK_INCLUDE_DIRS})
-		if (NOT UNWIND_INCLUDE_DIR)
-				message(FATAL_ERROR "Libunwind not found")
-		endif()
-		target_link_libraries(OpenApoc_Framework PUBLIC unwind dl)
-		#HACK - this assumes the library path is already searched?
-	else()
-		find_path(UNWIND_INCLUDE_DIR libunwind.h HINTS ${PC_UNWIND_INCLUDEDIR})
-		target_link_libraries(OpenApoc_Framework PUBLIC ${PC_UNWIND_LIBRARIES} dl)
-	endif()
-	target_compile_definitions(OpenApoc_Framework PUBLIC -DBACKTRACE_LIBUNWIND)
-	target_include_directories(OpenApoc_Framework PUBLIC ${UNWIND_INCLUDE_DIR})
+	target_compile_definitions(OpenApoc_Framework PUBLIC -DERROR_DIALOG)
 endif()
 
 # OpenGL is required for any renderer
@@ -301,12 +311,3 @@ target_link_libraries(OpenApoc_Framework PUBLIC physfs-static)
 target_include_directories(OpenApoc_Framework PRIVATE
 		${CMAKE_SOURCE_DIR}/dependencies/physfs/src)
 target_include_directories(OpenApoc_Framework PUBLIC ${CMAKE_SOURCE_DIR})
-
-
-set_target_properties(OpenApoc_Framework PROPERTIES COTIRE_CXX_PREFIX_HEADER_INIT
-	"framework_pch.h")
-
-if(ENABLE_COTIRE)
-	cotire(OpenApoc_Framework)
-endif()
-

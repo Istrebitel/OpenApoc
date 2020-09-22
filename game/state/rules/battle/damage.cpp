@@ -5,19 +5,19 @@
 namespace OpenApoc
 {
 
-const UString &HazardType::getPrefix()
+template <> const UString &StateObject<HazardType>::getPrefix()
 {
 	static UString prefix = "HAZARD_";
 	return prefix;
 }
 
-const UString &HazardType::getTypeName()
+template <> const UString &StateObject<HazardType>::getTypeName()
 {
 	static UString name = "HazardType";
 	return name;
 }
 
-sp<HazardType> HazardType::get(const GameState &state, const UString &id)
+template <> sp<HazardType> StateObject<HazardType>::get(const GameState &state, const UString &id)
 {
 	auto it = state.hazard_types.find(id);
 	if (it == state.hazard_types.end())
@@ -28,19 +28,20 @@ sp<HazardType> HazardType::get(const GameState &state, const UString &id)
 	return it->second;
 }
 
-const UString &DamageModifier::getPrefix()
+template <> const UString &StateObject<DamageModifier>::getPrefix()
 {
 	static UString prefix = "DAMAGEMODIFIER_";
 	return prefix;
 }
 
-const UString &DamageModifier::getTypeName()
+template <> const UString &StateObject<DamageModifier>::getTypeName()
 {
 	static UString name = "DamageModifier";
 	return name;
 }
 
-sp<DamageModifier> DamageModifier::get(const GameState &state, const UString &id)
+template <>
+sp<DamageModifier> StateObject<DamageModifier>::get(const GameState &state, const UString &id)
 {
 	auto it = state.damage_modifiers.find(id);
 	if (it == state.damage_modifiers.end())
@@ -51,19 +52,19 @@ sp<DamageModifier> DamageModifier::get(const GameState &state, const UString &id
 	return it->second;
 }
 
-const UString &DamageType::getPrefix()
+template <> const UString &StateObject<DamageType>::getPrefix()
 {
 	static UString prefix = "DAMAGETYPE_";
 	return prefix;
 }
 
-const UString &DamageType::getTypeName()
+template <> const UString &StateObject<DamageType>::getTypeName()
 {
 	static UString name = "DamageType";
 	return name;
 }
 
-sp<DamageType> DamageType::get(const GameState &state, const UString &id)
+template <> sp<DamageType> StateObject<DamageType>::get(const GameState &state, const UString &id)
 {
 	auto it = state.damage_types.find(id);
 	if (it == state.damage_types.end())
@@ -95,7 +96,7 @@ sp<Image> HazardType::getFrame(unsigned age, int offset)
 		// Get min and max frames for this stage
 		int minFrame = clamp((stage - 5) / 10, 0, 11);
 		int maxFrame = clamp((stage + 5 + 5) / 10, 0, 11);
-		// Trun offset if it's too big
+		// Trunc offset if it's too big
 		if (minFrame + offset > maxFrame)
 		{
 			offset = 0;
@@ -122,4 +123,4 @@ int HazardType::getLifetime(GameState &state)
 {
 	return randBoundsInclusive(state.rng, 2 * minLifetime, 2 * maxLifetime);
 }
-}
+} // namespace OpenApoc

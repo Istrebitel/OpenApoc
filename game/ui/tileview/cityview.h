@@ -9,6 +9,8 @@
 namespace OpenApoc
 {
 
+constexpr int ALIEN_INCIDENT_SCORE = -30;
+
 class Form;
 class GameState;
 class GraphicButton;
@@ -121,9 +123,12 @@ class CityView : public CityTileView
 	~CityView() override;
 
 	void initiateUfoMission(StateRef<Vehicle> ufo, StateRef<Vehicle> playerCraft);
+	void initiateBuildingMission(sp<GameState> state, StateRef<Building> building,
+	                             std::list<StateRef<Agent>> agents);
 
 	void begin() override;
 	void resume() override;
+	void refreshBaseView();
 	void update() override;
 	void render() override;
 	void eventOccurred(Event *e) override;
@@ -135,6 +140,7 @@ class CityView : public CityTileView
 	void setUpdateSpeed(CityUpdateSpeed updateSpeed);
 	void zoomLastEvent();
 	void setSelectionState(CitySelectionState selectionState);
+	void setSelectedTab(int tabIndex);
 };
 
 }; // namespace OpenApoc

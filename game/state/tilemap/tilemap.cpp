@@ -1,6 +1,5 @@
 #include "game/state/tilemap/tilemap.h"
 #include "framework/image.h"
-#include "framework/trace.h"
 #include "game/state/battle/battledoor.h"
 #include "game/state/battle/battlehazard.h"
 #include "game/state/battle/battleitem.h"
@@ -76,7 +75,7 @@ void TileMap::addObjectToMap(sp<Projectile> projectile)
 	projectile->tileObject = obj;
 }
 
-void TileMap::addObjectToMap(sp<Vehicle> vehicle)
+void TileMap::addObjectToMap(GameState &state, sp<Vehicle> vehicle)
 {
 	if (vehicle->tileObject)
 	{
@@ -85,6 +84,10 @@ void TileMap::addObjectToMap(sp<Vehicle> vehicle)
 	if (vehicle->shadowObject)
 	{
 		LogError("Vehicle already has shadow object");
+	}
+	if (vehicle->crashed && vehicle->smokeDoodad)
+	{
+		LogError("Vehicle already has smoke object");
 	}
 	// FIXME: mksp<> doesn't work for private (but accessible due to friend)
 	// constructors?
@@ -97,6 +100,13 @@ void TileMap::addObjectToMap(sp<Vehicle> vehicle)
 		sp<TileObjectShadow> shadow(new TileObjectShadow(*this, vehicle));
 		shadow->setPosition(vehicle->getPosition());
 		vehicle->shadowObject = shadow;
+	}
+	if (vehicle->crashed && !vehicle->carriedByVehicle)
+	{
+		sp<Doodad> smoke = mksp<Doodad>(vehicle->position + SMOKE_DOODAD_SHIFT,
+		                                StateRef<DoodadType>{&state, "DOODAD_13_SMOKE_FUME"});
+		addObjectToMap(smoke);
+		vehicle->smokeDoodad = smoke;
 	}
 }
 

@@ -1,4 +1,5 @@
 #include "game/state/shared/agent.h"
+#include "framework/configfile.h"
 #include "framework/framework.h"
 #include "game/state/battle/ai/aitype.h"
 #include "game/state/battle/battleunit.h"
@@ -25,7 +26,7 @@ namespace OpenApoc
 static const unsigned TICKS_PER_PHYSICAL_TRAINING = 4 * TICKS_PER_HOUR;
 static const unsigned TICKS_PER_PSI_TRAINING = 4 * TICKS_PER_HOUR;
 
-sp<Agent> Agent::get(const GameState &state, const UString &id)
+template <> sp<Agent> StateObject<Agent>::get(const GameState &state, const UString &id)
 {
 	auto it = state.agents.find(id);
 	if (it == state.agents.end())
@@ -36,17 +37,17 @@ sp<Agent> Agent::get(const GameState &state, const UString &id)
 	return it->second;
 }
 
-const UString &Agent::getPrefix()
+template <> const UString &StateObject<Agent>::getPrefix()
 {
 	static UString prefix = "AGENT_";
 	return prefix;
 }
-const UString &Agent::getTypeName()
+template <> const UString &StateObject<Agent>::getTypeName()
 {
 	static UString name = "Agent";
 	return name;
 }
-const UString &Agent::getId(const GameState &state, const sp<Agent> ptr)
+template <> const UString &StateObject<Agent>::getId(const GameState &state, const sp<Agent> ptr)
 {
 	static const UString emptyString = "";
 	for (auto &a : state.agents)
@@ -54,7 +55,7 @@ const UString &Agent::getId(const GameState &state, const sp<Agent> ptr)
 		if (a.second == ptr)
 			return a.first;
 	}
-	LogError("No agent matching pointer %p", ptr.get());
+	LogError("No agent matching pointer %p", static_cast<void *>(ptr.get()));
 	return emptyString;
 }
 
@@ -65,7 +66,7 @@ StateRef<Agent> AgentGenerator::createAgent(GameState &state, StateRef<Organisat
 	for (auto &t : state.agent_types)
 		if (t.second->role == role && t.second->playable)
 			types.insert(types.begin(), t.second);
-	auto type = listRandomiser(state.rng, types);
+	auto type = pickRandom(state.rng, types);
 
 	return createAgent(state, org, {&state, AgentType::getId(state, type)});
 }
@@ -91,15 +92,15 @@ StateRef<Agent> AgentGenerator::createAgent(GameState &state, StateRef<Organisat
 			return nullptr;
 		}
 
-		auto firstName = listRandomiser(state.rng, firstNameList->second);
-		auto secondName = listRandomiser(state.rng, this->second_names);
+		auto firstName = pickRandom(state.rng, firstNameList->second);
+		auto secondName = pickRandom(state.rng, this->second_names);
 		agent->name = format("%s %s", firstName, secondName);
 	}
 	else
 	{
 		agent->name = type->name;
 	}
-	// FIXME: When rng is fixed we can remove this unnesecary kludge
+	// FIXME: When rng is fixed we can remove this unnecessary kludge
 	// RNG is bad at generating small numbers, so we generate more and divide
 	agent->appearance = randBoundsExclusive(state.rng, 0, type->appearance_count * 10) / 10;
 
@@ -140,7 +141,7 @@ StateRef<Agent> AgentGenerator::createAgent(GameState &state, StateRef<Organisat
 	state.agents[ID] = agent;
 
 	// Fill initial equipment list
-	std::list<sp<AEquipmentType>> initialEquipment;
+	std::list<const AEquipmentType *> initialEquipment;
 	if (type->inventory)
 	{
 		// Player gets no default equipment
@@ -162,8 +163,8 @@ StateRef<Agent> AgentGenerator::createAgent(GameState &state, StateRef<Organisat
 	}
 	else
 	{
-		initialEquipment.push_back(type->built_in_weapon_right);
-		initialEquipment.push_back(type->built_in_weapon_left);
+		initialEquipment.push_back(type->built_in_weapon_right.get());
+		initialEquipment.push_back(type->built_in_weapon_left.get());
 	}
 
 	// Add initial equipment
@@ -284,6 +285,32 @@ UString Agent::getRankName() const
 	return "";
 }
 
+/**
+ * Get relevant skill.
+ */
+int Agent::getSkill() const
+{
+	int skill = 0;
+	switch (type->role)
+	{
+		case AgentType::Role::Physicist:
+			skill = current_stats.physics_skill;
+			break;
+		case AgentType::Role::BioChemist:
+			skill = current_stats.biochem_skill;
+			break;
+		case AgentType::Role::Engineer:
+			skill = current_stats.engineering_skill;
+			break;
+		case AgentType::Role::Soldier:
+			// Soldiers can't be used for anything that uses a skill value
+			skill = 0;
+			break;
+	}
+
+	return skill;
+}
+
 void Agent::leaveBuilding(GameState &state, Vec3<float> initialPosition)
 {
 	if (currentBuilding)
@@ -315,6 +342,10 @@ void Agent::enterBuilding(GameState &state, StateRef<Building> b)
 
 void Agent::enterVehicle(GameState &state, StateRef<Vehicle> v)
 {
+	if (v->getPassengers() >= v->getMaxPassengers())
+	{
+		return;
+	}
 	if (currentBuilding)
 	{
 		currentBuilding->currentAgents.erase({&state, shared_from_this()});
@@ -327,10 +358,6 @@ void Agent::enterVehicle(GameState &state, StateRef<Vehicle> v)
 	}
 	currentVehicle = v;
 	currentVehicle->currentAgents.insert({&state, shared_from_this()});
-	if (currentVehicle->getMaxPassengers() < currentVehicle->getPassengers())
-	{
-		LogWarning("WHAT THE HELL!? Vehicle over passenger limit??");
-	}
 }
 
 bool Agent::canTeleport() const
@@ -371,6 +398,7 @@ void Agent::transfer(GameState &state, StateRef<Building> newHome)
 	homeBuilding = newHome;
 	recentlyHired = false;
 	recentryTransferred = true;
+	assigned_to_lab = false;
 	setMission(state, AgentMission::gotoBuilding(state, *this, newHome, false, true));
 }
 
@@ -445,7 +473,7 @@ bool Agent::canAddEquipment(Vec2<int> pos, StateRef<AEquipmentType> equipmentTyp
 		}
 
 		// This could would check that every slot is of appropriate type,
-		// But for units armor this is unnecesary
+		// But for units armor this is unnecessary
 		/*
 		for (int y = 0; y < type->equipscreen_size.y; y++)
 		{
@@ -663,7 +691,7 @@ sp<AEquipment> Agent::addEquipmentByType(GameState &state, Vec2<int> pos,
 	auto equipment = mksp<AEquipment>();
 	equipment->type = equipmentType;
 	equipment->armor = equipmentType->armor;
-	if (equipmentType->ammo_types.size() == 0)
+	if (equipmentType->ammo_types.empty())
 	{
 		equipment->ammo = equipmentType->max_ammo;
 	}
@@ -785,10 +813,9 @@ void Agent::updateSpeed()
 	strength *= strength * 16;
 
 	// Ensure actual speed is at least "1"
-	modified_stats.speed =
-	    std::max(8,
-	             ((strength + encumbrance) / 2 + current_stats.speed * (strength - encumbrance)) /
-	                 (strength + encumbrance));
+	modified_stats.speed = std::max(
+	    8, ((strength + encumbrance) / 2 + current_stats.speed * (strength - encumbrance)) /
+	           (strength + encumbrance));
 }
 
 void Agent::updateModifiedStats()
@@ -828,6 +855,18 @@ bool Agent::addMission(GameState &state, AgentMission *mission, bool toBack)
 
 bool Agent::setMission(GameState &state, AgentMission *mission)
 {
+	for (auto &m : this->missions)
+	{
+		// if we're removing an InvestigateBuilding mission
+		// decrease the investigate count so the other investigating vehicles won't dangle
+		if (m->type == AgentMission::MissionType::InvestigateBuilding)
+		{
+			if (!m->isFinished(state, *this))
+			{
+				m->targetBuilding->decreasePendingInvestigatorCount(state);
+			}
+		}
+	}
 	missions.clear();
 	missions.emplace_front(mission);
 	missions.front()->start(state, *this);
@@ -861,7 +900,6 @@ bool Agent::getNewGoal(GameState &state)
 {
 	bool popped = false;
 	bool acquired = false;
-	Vec3<float> nextGoal;
 	// Pop finished missions if present
 	popped = popFinishedMissions(state);
 	do
@@ -880,8 +918,16 @@ bool Agent::getNewGoal(GameState &state)
 void Agent::die(GameState &state, bool silent)
 {
 	auto thisRef = StateRef<Agent>{&state, shared_from_this()};
-	// Actually die
+
+	// Set health to zero so agent will die on next update
 	modified_stats.health = 0;
+
+	// Remove from vehicle
+	if (currentVehicle)
+	{
+		currentVehicle->currentAgents.erase(thisRef);
+	}
+
 	// Remove from lab
 	if (assigned_to_lab)
 	{
@@ -901,26 +947,12 @@ void Agent::die(GameState &state, bool silent)
 			}
 		}
 	}
-	// Remove from building
-	if (currentBuilding)
+
+	// In city (if not died in a vehicle) we make an event
+	if (!silent && !state.current_battle && owner == state.getPlayer())
 	{
-		currentBuilding->currentAgents.erase(thisRef);
-	}
-	// Remove from vehicle
-	if (currentVehicle)
-	{
-		currentVehicle->currentAgents.erase(thisRef);
-	}
-	// In city we remove agent
-	if (!state.current_battle)
-	{
-		// In city (if not died in a vehicle) we make an event
-		if (!silent && owner == state.getPlayer())
-		{
-			fw().pushEvent(
-			    new GameSomethingDiedEvent(GameEventType::AgentDiedCity, name, "", position));
-		}
-		state.agents.erase(getId(state, shared_from_this()));
+		fw().pushEvent(
+		    new GameSomethingDiedEvent(GameEventType::AgentDiedCity, name, "", position));
 	}
 }
 
@@ -928,6 +960,27 @@ bool Agent::isDead() const { return getHealth() <= 0; }
 
 void Agent::update(GameState &state, unsigned ticks)
 {
+	if (isDead() && status == AgentStatus::Alive)
+	{
+		status = AgentStatus::Dead;
+
+		const auto thisRef = StateRef<Agent>{&state, shared_from_this()};
+
+		// Remove from building
+		if (currentBuilding && !state.current_battle)
+		{
+			currentBuilding->currentAgents.erase(thisRef);
+		}
+
+		// In city we remove agent
+		if (!state.current_battle)
+		{
+			state.agents.erase(getId(state, shared_from_this()));
+		}
+
+		return;
+	}
+
 	if (isDead() || !city)
 	{
 		return;
@@ -942,7 +995,7 @@ void Agent::update(GameState &state, unsigned ticks)
 		teleportTicksAccumulated = 0;
 	}
 
-	// Agents in vehicles don't update missions and dont' move
+	// Agents in vehicles don't update missions and don't move
 	if (!currentVehicle)
 	{
 		if (!this->missions.empty())
@@ -963,55 +1016,62 @@ void Agent::updateEachSecond(GameState &state)
 	}
 }
 
-void Agent::updateDaily(GameState &state) { recentlyFought = false; }
+void Agent::updateDaily(GameState &state [[maybe_unused]]) { recentlyFought = false; }
 
 void Agent::updateHourly(GameState &state)
 {
-	// If not in home building or not in vehicle stationed in home building)
-	if (currentBuilding != homeBuilding &&
-	    (!currentVehicle || currentVehicle->currentBuilding != homeBuilding))
+	StateRef<Base> base;
+	if (currentBuilding == homeBuilding)
 	{
+		// agent is in home building
+		base = currentBuilding->base;
+	}
+	else if (currentVehicle && currentVehicle->currentBuilding == homeBuilding)
+	{
+		// agent is in a vehicle stationed in home building
+		base = currentVehicle->currentBuilding->base;
+	}
+
+	if (!base)
+	{
+		// not in a base
 		return;
 	}
-	// Heal and train
-	if (currentBuilding->base)
+
+	// Heal
+	if (modified_stats.health < current_stats.health && !recentlyFought)
 	{
-		// Heal
-		if (modified_stats.health < current_stats.health && !recentlyFought)
+		int usage = base->getUsage(state, FacilityType::Capacity::Medical);
+		if (usage < 999)
 		{
-			int usage = currentBuilding->base->getUsage(state, FacilityType::Capacity::Medical);
-			if (usage < 999)
+			usage = std::max(100, usage);
+			// As per Roger Wong's guide, healing is 0.8 points an hour
+			healingProgress += 80.0f / (float)usage;
+			if (healingProgress > 1.0f)
 			{
-				usage = std::max(100, usage);
-				// As per Roger Wong's guide, healing is 0.8 points an hour
-				healingProgress += 80.0f / (float)usage;
-				if (healingProgress > 1.0f)
-				{
-					healingProgress -= 1.0f;
-					modified_stats.health++;
-				}
+				healingProgress -= 1.0f;
+				modified_stats.health++;
 			}
 		}
-		// Train
-		if (trainingAssignment != TrainingAssignment::None)
+	}
+	// Train
+	if (trainingAssignment != TrainingAssignment::None)
+	{
+		int usage = base->getUsage(state, trainingAssignment == TrainingAssignment::Physical
+		                                      ? FacilityType::Capacity::Training
+		                                      : FacilityType::Capacity::Psi);
+		if (usage < 999)
 		{
-			int usage =
-			    currentBuilding->base->getUsage(state,
-			                                    trainingAssignment == TrainingAssignment::Physical
-			                                        ? FacilityType::Capacity::Training
-			                                        : FacilityType::Capacity::Psi);
-			if (usage < 999)
+			usage = std::max(100, usage);
+			// As per Roger Wong's guide
+			float mult = config().getFloat("OpenApoc.Cheat.StatGrowthMultiplier");
+			if (trainingAssignment == TrainingAssignment::Physical)
 			{
-				usage = std::max(100, usage);
-				// As per Roger Wong's guide
-				if (trainingAssignment == TrainingAssignment::Physical)
-				{
-					trainPhysical(state, TICKS_PER_HOUR * 100 / usage);
-				}
-				else
-				{
-					trainPsi(state, TICKS_PER_HOUR * 100 / usage);
-				}
+				trainPhysical(state, TICKS_PER_HOUR * 100 / usage * mult);
+			}
+			else
+			{
+				trainPsi(state, TICKS_PER_HOUR * 100 / usage * mult);
 			}
 		}
 	}
@@ -1125,7 +1185,7 @@ void Agent::trainPsi(GameState &state, unsigned ticks)
 		// already)
 		//   Or, for initial 10, even at 30 the formula would be 100 - (90-10) = 20% improve chance
 		//   In this formula the bigger is the initial stat, the harder it is to improve
-		// Therefore, we'll use a formula that makes senes and follows what he said.
+		// Therefore, we'll use a formula that makes sense and follows what he said.
 		// Properties of our formula:
 		// - properly gives 0 chance when current = 3x initial
 		// - gives higher chance with higher initial values

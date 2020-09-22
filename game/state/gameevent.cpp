@@ -31,6 +31,7 @@ const std::map<GameEventType, UString> GameEvent::optionsMap = {
     {GameEventType::NotEnoughAmmo, "Notifications.City.NotEnoughAmmo"},
     {GameEventType::VehicleRefuelled, "Notifications.City.VehicleRefuelled"},
     {GameEventType::NotEnoughFuel, "Notifications.City.NotEnoughFuel"},
+    {GameEventType::CommenceInvestigation, "Notifications.City.CommenceInvestigation"},
     {GameEventType::UnauthorizedVehicle, "Notifications.City.UnauthorizedVehicle"},
 
     {GameEventType::HostileSpotted, "Notifications.Battle.HostileSpotted"},
@@ -124,9 +125,9 @@ UString GameVehicleEvent::message()
 				return tr("An illegal flyer has been detected.");
 			}
 		case GameEventType::NotEnoughAmmo:
-			return tr("Not enough ammo to rearm vehicle");
+			return format("%s %s", tr("Not enough ammo to rearm vehicle:"), vehicle->name);
 		case GameEventType::NotEnoughFuel:
-			return tr("Not enough fuel to refuel vehicle");
+			return format("%s %s", tr("Not enough fuel to refuel vehicle"), vehicle->name);
 		default:
 			LogError("Invalid vehicle event type");
 			break;
@@ -214,6 +215,8 @@ UString GameBuildingEvent::message()
 			return tr("Live Alien spotted.");
 		case GameEventType::CargoExpiresSoon:
 			return format("%s %s", tr("Cargo expires soon:"), building->name);
+		case GameEventType::CommenceInvestigation:
+			return "";
 		default:
 			LogError("Invalid building event type");
 			break;
@@ -390,7 +393,11 @@ GameSomethingDiedEvent::GameSomethingDiedEvent(GameEventType type, UString name,
 		case GameEventType::VehicleNoFuel:
 			messageInner = format("%s %s", tr("Vehicle out of fuel:"), name);
 			break;
+		default:
+			LogWarning("GameSomethingDiedEvent %s called on non-death event %d", name,
+			           static_cast<int>(type));
+			break;
 	}
 }
 UString GameSomethingDiedEvent::message() { return messageInner; }
-}
+} // namespace OpenApoc

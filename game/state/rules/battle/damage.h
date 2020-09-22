@@ -11,9 +11,8 @@ class Sample;
 class DoodadType;
 class GameState;
 
-class HazardType : public StateObject
+class HazardType : public StateObject<HazardType>
 {
-	STATE_OBJECT(HazardType)
   public:
 	StateRef<DoodadType> doodadType;
 	sp<Sample> sound;
@@ -25,7 +24,7 @@ class HazardType : public StateObject
 	unsigned minLifetime = 0;
 	unsigned maxLifetime = 0;
 
-	// Wether frames follow the logic of fire
+	// Whether frames follow the logic of fire
 	bool fire = false;
 
 	// Get first frame used for age and offset
@@ -35,9 +34,8 @@ class HazardType : public StateObject
 	int getLifetime(GameState &state);
 };
 
-class DamageModifier : public StateObject
+class DamageModifier : public StateObject<DamageModifier>
 {
-	STATE_OBJECT(DamageModifier)
   public:
 	// nothing?
 };
@@ -49,9 +47,8 @@ enum class DamageSource
 	Debuff
 };
 
-class DamageType : public StateObject
+class DamageType : public StateObject<DamageType>
 {
-	STATE_OBJECT(DamageType)
   public:
 	enum class BlockType
 	{
@@ -78,7 +75,7 @@ class DamageType : public StateObject
 	sp<Image> icon_sprite;
 	std::map<StateRef<DamageModifier>, int> modifiers;
 
-	// Wether this damage type produces explosion on hit
+	// Whether this damage type produces explosion on hit
 	bool explosive = false;
 	// Doodad used by explosion, if nullptr will use common explosion doodad set
 	StateRef<DoodadType> explosionDoodad;
@@ -116,4 +113,4 @@ class DamageType : public StateObject
 
 	int dealDamage(int damage, StateRef<DamageModifier> modifier) const;
 };
-}
+} // namespace OpenApoc

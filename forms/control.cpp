@@ -2,24 +2,30 @@
 #include "dependencies/pugixml/src/pugixml.hpp"
 #include "forms/forms.h"
 #include "forms/ui.h"
+#include "framework/configfile.h"
 #include "framework/data.h"
 #include "framework/event.h"
 #include "framework/font.h"
 #include "framework/framework.h"
 #include "framework/image.h"
+#include "framework/options.h"
 #include "framework/renderer.h"
 #include "framework/sound.h"
-#include "framework/trace.h"
 #include "library/sp.h"
 
 namespace OpenApoc
 {
 
 Control::Control(bool takesFocus)
-    : mouseInside(false), mouseDepressed(false), resolvedLocation(0, 0), Visible(true),
-      Name("Control"), Location(0, 0), Size(0, 0), BackgroundColour(0, 0, 0, 0),
-      takesFocus(takesFocus), showBounds(false), Enabled(true), canCopy(true)
+    : funcPreRender(nullptr), mouseInside(false), mouseDepressed(false), resolvedLocation(0, 0),
+      Visible(true), isClickable(false), Name("Control"), Location(0, 0), Size(0, 0),
+      SelectionSize(0, 0), BackgroundColour(0, 0, 0, 0), takesFocus(takesFocus), showBounds(false),
+      Enabled(true), canCopy(true),
+      // Tooltip defaults
+      ToolTipBackground{128, 128, 128}, ToolTipBorders{
+                                            {1, {0, 0, 0}}, {1, {255, 255, 255}}, {1, {0, 0, 0, 0}}}
 {
+	this->ToolTipFont = ui().getFont(Options::defaultTooltipFont.get());
 }
 
 Control::~Control() { unloadResources(); }
@@ -66,24 +72,29 @@ void Control::resolveLocation()
 	}
 }
 
-bool Control::isPointInsideControlBounds(int x, int y)
+bool Control::isPointInsideControlBounds(int x, int y) const
 {
-	bool result = true;
+	const Vec2<int> &Size =
+	    (SelectionSize.x == 0 || SelectionSize.y == 0) ? this->Size : SelectionSize;
 
-	if (x >= resolvedLocation.x && x < resolvedLocation.x + Size.x && y >= resolvedLocation.y &&
-	    y < resolvedLocation.y + Size.y)
+	return x >= resolvedLocation.x && x < resolvedLocation.x + Size.x && y >= resolvedLocation.y &&
+	       y < resolvedLocation.y + Size.y;
+}
+
+bool Control::isPointInsideControlBounds(Event *e, sp<Control> c) const
+{
+	if (!e || !c)
 	{
-		auto recursiveparent = this->getParent();
-		if (recursiveparent != nullptr)
-		{
-			result = recursiveparent->isPointInsideControlBounds(x, y);
-		}
+		return false;
 	}
-	else
-	{
-		result = false;
-	}
-	return result;
+
+	const Vec2<int> &Size =
+	    (c->SelectionSize.x == 0 || c->SelectionSize.y == 0) ? c->Size : c->SelectionSize;
+	int eventX = e->forms().MouseInfo.X + e->forms().RaisedBy->resolvedLocation.x;
+	int eventY = e->forms().MouseInfo.Y + e->forms().RaisedBy->resolvedLocation.y;
+
+	return eventX >= c->resolvedLocation.x && eventX < c->resolvedLocation.x + Size.x &&
+	       eventY >= c->resolvedLocation.y && eventY < c->resolvedLocation.y + Size.y;
 }
 
 void Control::eventOccured(Event *e)
@@ -135,6 +146,10 @@ void Control::eventOccured(Event *e)
 			{
 				this->pushFormEvent(FormEventType::MouseDown, e);
 				mouseDepressed = true;
+				if (isClickable)
+				{
+					e->Handled = true;
+				}
 			}
 		}
 
@@ -188,9 +203,7 @@ void Control::eventOccured(Event *e)
 					{
 						this->pushFormEvent(FormEventType::MouseEnter, &fakeMouseEvent);
 					}
-
 					this->pushFormEvent(FormEventType::MouseMove, &fakeMouseEvent);
-
 					e->Handled = true;
 				}
 				else
@@ -264,11 +277,74 @@ void Control::eventOccured(Event *e)
 			e->Handled = true;
 		}
 	}
+
+	if (e->type() == EVENT_FORM_INTERACTION)
+	{
+		if (e->forms().EventFlag == FormEventType::MouseMove)
+		{
+			if (e->forms().RaisedBy == shared_from_this())
+			{
+				if (!ToolTipText.empty())
+				{
+					up<FormsEvent> toolTipEvent = mkup<FormsEvent>();
+					toolTipEvent->forms().RaisedBy = shared_from_this();
+					toolTipEvent->forms().EventFlag = FormEventType::ToolTip;
+					toolTipEvent->forms().MouseInfo = e->forms().MouseInfo;
+					fw().toolTipStartTimer(std::move(toolTipEvent));
+					e->Handled = true;
+				}
+				else
+				{
+					fw().toolTipStopTimer();
+				}
+			}
+		}
+		else if (e->forms().EventFlag == FormEventType::ToolTip)
+		{
+			if (e->forms().RaisedBy == shared_from_this())
+			{
+				Vec2<int> pos = {e->forms().MouseInfo.X, e->forms().MouseInfo.Y};
+				e->Handled = true;
+
+				sp<Image> textImage = ToolTipFont->getString(ToolTipText);
+
+				unsigned totalBorder = 0;
+				for (const auto &b : ToolTipBorders)
+					totalBorder += b.first;
+
+				sp<Surface> surface = mksp<Surface>(
+				    textImage->size + Vec2<unsigned int>{totalBorder * 2, totalBorder * 2});
+
+				RendererSurfaceBinding b(*fw().renderer, surface);
+
+				fw().renderer->drawFilledRect({0, 0}, surface->size, ToolTipBackground);
+				int i = 0;
+				for (const auto &b : ToolTipBorders)
+				{
+					fw().renderer->drawRect({i, i},
+					                        surface->size - Vec2<unsigned int>{i * 2, i * 2},
+					                        b.second, b.first);
+					i += b.first;
+				}
+				fw().renderer->draw(textImage, {totalBorder, totalBorder});
+
+				fw().showToolTip(surface, pos + resolvedLocation -
+				                              Vec2<int>{surface->size.x / 2, surface->size.y});
+			}
+		}
+		else if (e->forms().EventFlag == FormEventType::MouseClick ||
+		         e->forms().EventFlag == FormEventType::MouseDown)
+		{
+			if (e->forms().RaisedBy == shared_from_this())
+			{
+				fw().toolTipStopTimer();
+			}
+		}
+	}
 }
 
 void Control::render()
 {
-	TRACE_FN_ARGS1("Name", this->Name);
 	if (!Visible || Size.x == 0 || Size.y == 0)
 	{
 		return;
@@ -289,7 +365,6 @@ void Control::render()
 		}
 
 		RendererSurfaceBinding b(*fw().renderer, controlArea);
-		preRender();
 		onRender();
 		postRender();
 		if (this->palette)
@@ -310,12 +385,28 @@ void Control::render()
 	}
 }
 
-void Control::preRender() { fw().renderer->clear(BackgroundColour); }
-
-void Control::onRender()
+/**
+ * Used if controls require computations before rendering.
+ * Any operations other than graphical.
+ */
+void Control::preRender()
 {
-	// Nothing specifically for the base control
+	for (auto ctrlidx = Controls.begin(); ctrlidx != Controls.end(); ctrlidx++)
+	{
+		auto c = *ctrlidx;
+		if (c->Visible)
+		{
+			c->preRender();
+		}
+	}
+
+	if (funcPreRender)
+	{
+		funcPreRender(shared_from_this());
+	}
 }
+
+void Control::onRender() { fw().renderer->clear(BackgroundColour); }
 
 void Control::postRender()
 {
@@ -452,6 +543,18 @@ void Control::configureChildrenFromXml(pugi::xml_node *parent)
 			auto lb = this->createChild<ListBox>(sb);
 			lb->configureFromXml(&node);
 		}
+		else if (nodename == "multilistbox")
+		{
+			sp<ScrollBar> sb = nullptr;
+			UString scrollBarID = node.attribute("scrollbarid").as_string();
+
+			if (!scrollBarID.empty())
+			{
+				sb = this->findControlTyped<ScrollBar>(scrollBarID);
+			}
+			auto lb = this->createChild<MultilistBox>(sb);
+			lb->configureFromXml(&node);
+		}
 		else if (nodename == "textedit")
 		{
 			auto te = this->createChild<TextEdit>();
@@ -490,6 +593,10 @@ void Control::configureSelfFromXml(pugi::xml_node *node)
 	if (node->attribute("border"))
 	{
 		this->showBounds = node->attribute("border").as_bool();
+	}
+	if (node->attribute("isclickable"))
+	{
+		this->isClickable = node->attribute("isclickable").as_bool();
 	}
 
 	auto parentControl = this->getParent();
@@ -544,7 +651,7 @@ void Control::configureSelfFromXml(pugi::xml_node *node)
 
 			UString widthAttr = child.attribute("width").as_string();
 			// if size ends with % this means that it is special (percentage) size
-			if (Strings::isInteger(widthAttr) && !widthAttr.endsWith("%"))
+			if (Strings::isInteger(widthAttr) && !ends_with(widthAttr, "%"))
 			{
 				Size.x = child.attribute("width").as_int();
 			}
@@ -554,7 +661,7 @@ void Control::configureSelfFromXml(pugi::xml_node *node)
 			}
 			UString heightAttr = child.attribute("height").as_string();
 			// if size ends with % this means that it is special (percentage) size
-			if (Strings::isInteger(heightAttr) && !heightAttr.endsWith("%"))
+			if (Strings::isInteger(heightAttr) && !ends_with(heightAttr, "%"))
 			{
 				Size.y = child.attribute("height").as_int();
 			}
@@ -565,7 +672,7 @@ void Control::configureSelfFromXml(pugi::xml_node *node)
 
 			if (specialsizex != "")
 			{
-				if (specialsizex.str().back() == '%')
+				if (specialsizex.back() == '%')
 				{
 					// Skip % sign at the end
 					auto sizeRatio = Strings::toFloat(specialsizex) / 100.0f;
@@ -580,7 +687,7 @@ void Control::configureSelfFromXml(pugi::xml_node *node)
 
 			if (specialsizey != "")
 			{
-				if (specialsizey.str().back() == '%')
+				if (specialsizey.back() == '%')
 				{
 					auto sizeRatio = Strings::toFloat(specialsizey) / 100.0f;
 					setRelativeHeight(sizeRatio);
@@ -611,6 +718,51 @@ void Control::configureSelfFromXml(pugi::xml_node *node)
 					LogWarning("Control \"%s\" has not supported size y value \"%s\"", this->Name,
 					           specialsizey);
 				}
+			}
+		}
+		else if (childName == "tooltip")
+		{
+			const auto tooltipFont = ui().getFont(child.attribute("font").as_string());
+			if (tooltipFont)
+			{
+				ToolTipText = child.attribute("text").as_string();
+				if (!ToolTipText.empty())
+					ToolTipText = tr(ToolTipText);
+			}
+			else
+			{
+				LogWarning("Could not find font for tooltip of control \"%s\"", Name);
+			}
+			UString backgroundString = child.attribute("background").as_string();
+			if (!backgroundString.empty())
+			{
+				if (*backgroundString.begin() == '#')
+					ToolTipBackground = Colour::FromHex(backgroundString);
+				else
+					ToolTipBackground = Colour::FromHtmlName(backgroundString);
+			}
+			size_t numDefaultBorders = ToolTipBorders.size();
+			for (auto child2 = child.first_child(); child2; child2 = child2.next_sibling())
+			{
+				UString child2Name = child2.name();
+				if (child2Name == "border")
+				{
+					UString borderColourStr = child2.attribute("colour").as_string();
+					Colour borderColour;
+					if (*borderColourStr.begin() == '#')
+						borderColour = Colour::FromHex(borderColourStr);
+					else
+						borderColour = Colour::FromHtmlName(borderColourStr);
+					borderColour.a = child2.attribute("alpha").as_uint(255);
+					ToolTipBorders.emplace_back(child2.attribute("width").as_uint(1), borderColour);
+				}
+			}
+			if (numDefaultBorders != ToolTipBorders.size())
+			{
+				// this means that the xml file has specified what border styles to use
+				// we have to remove the default borders so the new ones don't stack over them
+				ToolTipBorders.erase(ToolTipBorders.begin(),
+				                     ToolTipBorders.begin() + numDefaultBorders);
 			}
 		}
 	}
@@ -671,6 +823,22 @@ sp<Control> Control::findControl(UString ID) const
 	return nullptr;
 }
 
+bool Control::replaceChildByName(sp<Control> ctrl)
+{
+	for (auto c = Controls.begin(); c != Controls.end(); c++)
+	{
+		if ((*c)->Name == ctrl->Name)
+		{
+			(*c) = ctrl;
+			ctrl->owningControl = shared_from_this();
+			setDirty();
+			return true;
+		}
+	}
+
+	return false;
+}
+
 sp<Control> Control::getParent() const { return owningControl.lock(); }
 
 sp<Control> Control::getRootControl()
@@ -692,6 +860,21 @@ sp<Form> Control::getForm()
 	return std::dynamic_pointer_cast<Form>(c);
 }
 
+void Control::setParent(sp<Control> Parent)
+{
+	if (Parent)
+	{
+		auto previousParent = this->owningControl.lock();
+		if (previousParent)
+		{
+			LogError("Reparenting control");
+		}
+		Parent->Controls.push_back(shared_from_this());
+		Parent->setDirty();
+	}
+	owningControl = Parent;
+}
+
 void Control::setParent(sp<Control> Parent, int position)
 {
 	if (Parent)
@@ -701,14 +884,7 @@ void Control::setParent(sp<Control> Parent, int position)
 		{
 			LogError("Reparenting control");
 		}
-		if (position == -1)
-		{
-			Parent->Controls.push_back(shared_from_this());
-		}
-		else
-		{
-			Parent->Controls.insert(Parent->Controls.begin() + position, shared_from_this());
-		}
+		Parent->Controls.insert(Parent->Controls.begin() + position, shared_from_this());
 		Parent->setDirty();
 	}
 	owningControl = Parent;
@@ -729,12 +905,6 @@ sp<Control> Control::getAncestor(sp<Control> Parent)
 		}
 	}
 	return ancestor;
-}
-
-Vec2<int> Control::getLocationOnScreen() const
-{
-	Vec2<int> r(resolvedLocation.x, resolvedLocation.y);
-	return r;
 }
 
 void Control::setRelativeWidth(float widthFactor)
@@ -850,10 +1020,16 @@ void Control::copyControlData(sp<Control> CopyOf)
 	CopyOf->Name = this->Name;
 	CopyOf->Location = this->Location;
 	CopyOf->Size = this->Size;
+	CopyOf->SelectionSize = this->SelectionSize;
 	CopyOf->BackgroundColour = this->BackgroundColour;
 	CopyOf->takesFocus = this->takesFocus;
 	CopyOf->showBounds = this->showBounds;
 	CopyOf->Visible = this->Visible;
+	CopyOf->isClickable = this->isClickable;
+	CopyOf->ToolTipText = this->ToolTipText;
+	CopyOf->ToolTipFont = this->ToolTipFont;
+	CopyOf->ToolTipBackground = this->ToolTipBackground;
+	CopyOf->ToolTipBorders = this->ToolTipBorders;
 
 	for (auto &c : Controls)
 	{
@@ -957,6 +1133,7 @@ void Control::pushFormEvent(FormEventType type, Event *parentEvent)
 		case FormEventType::TriStateBoxState1Selected:
 		case FormEventType::TriStateBoxState2Selected:
 		case FormEventType::TriStateBoxState3Selected:
+		case FormEventType::TextEditCancel:
 		case FormEventType::TextEditFinish:
 		{
 			event = new FormsEvent();
@@ -1023,7 +1200,5 @@ void Control::setVisible(bool value)
 		this->setDirty();
 	}
 }
-
-bool Control::isVisible() const { return this->Visible; }
 
 }; // namespace OpenApoc

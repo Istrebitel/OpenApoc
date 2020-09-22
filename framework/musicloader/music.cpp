@@ -12,19 +12,6 @@ namespace
 
 using namespace OpenApoc;
 
-const std::vector<unsigned int> starts = {
-    0,         8467200,   19580400,  35897400,  40131000,  46569600,  57947400,
-    72147600,  84142800,  92610000,  104076000, 107780400, 118540800, 130712400,
-    142090200, 154085400, 165904200, 176664600, 187248600, 196686000, 207270000,
-    218559600, 231436800, 234082800, 237169800, 239815800, 242461800, 245107800,
-    247842000, 250488000, 263365200, 275801400, 287796600, 298821600, 304819200};
-const std::vector<unsigned int> ends = {
-    8202600,   19404000,  35897400,  40131000,  46569600,  57859200,  72147600,
-    84054600,  92610000,  103987800, 107780400, 118452600, 130536000, 142090200,
-    153997200, 165816000, 176488200, 187072200, 196686000, 207093600, 218383200,
-    231348600, 234082800, 237169800, 239815800, 242461800, 245107800, 247842000,
-    250488000, 263188800, 275713200, 287708400, 298821600, 304731000, 311434200};
-
 const int MusicChannels = 2;
 const int MusicBytesPerSample = 2;
 
@@ -36,6 +23,7 @@ class RawMusicTrack : public MusicTrack
 	IFile file;
 	unsigned int samplePosition;
 	unsigned int startingPosition;
+	unsigned int sampleCount = 0;
 	bool valid;
 	UString name;
 
@@ -131,28 +119,35 @@ class RawMusicLoader : public MusicLoader
 
 	sp<MusicTrack> loadMusic(UString path) override
 	{
-		auto strings = path.split(':');
-		if (strings.size() != 2)
+		auto strings = split(path, ":");
+		// Expected format: "rawmusic:file:start_byte_offset:byte_size"
+		if (strings.size() != 4)
 		{
 			LogInfo("Invalid raw music path string \"%s\"", path);
 			return nullptr;
 		}
-
-		if (!Strings::isInteger(strings[1]))
+		if (strings[0] != "rawmusic")
 		{
-			LogInfo("Raw music track \"%s\" doesn't look like a number", strings[1]);
+			LogInfo("Not rawmusic path: \"%s\"", path);
+			return nullptr;
+		}
+		if (!Strings::isInteger(strings[2]))
+		{
+			LogInfo("Raw music track \"%s\" start offset \"%s\" doesn't look like a number", path,
+			        strings[2]);
+			return nullptr;
+		}
+		if (!Strings::isInteger(strings[3]))
+		{
+			LogInfo("Raw music track \"%s\" length \"%s\" doesn't look like a number", path,
+			        strings[3]);
 			return nullptr;
 		}
 
-		unsigned int track = Strings::toInteger(strings[1]);
-		if (track > ends.size())
-		{
-			LogInfo("Raw music track %d out of bounds", track);
-			return nullptr;
-		}
-		return mksp<RawMusicTrack>(data, path, strings[0], starts[track],
-		                           (ends[track] - starts[track]) /
-		                               (MusicChannels * MusicBytesPerSample));
+		unsigned int offset = Strings::toInteger(strings[2]);
+		unsigned int length = Strings::toInteger(strings[3]);
+		return mksp<RawMusicTrack>(data, path, strings[1], offset,
+		                           length / (MusicChannels * MusicBytesPerSample));
 	}
 };
 

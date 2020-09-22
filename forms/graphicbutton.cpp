@@ -17,6 +17,7 @@ GraphicButton::GraphicButton(sp<Image> image, sp<Image> imageDepressed, sp<Image
       buttonclick(
           fw().data->loadSample("RAWSOUND:xcom3/rawsound/strategc/intrface/button1.raw:22050"))
 {
+	isClickable = true;
 }
 
 GraphicButton::~GraphicButton() = default;
@@ -66,6 +67,8 @@ void GraphicButton::eventOccured(Event *e)
 
 void GraphicButton::onRender()
 {
+	Control::onRender();
+
 	sp<Image> useimage;
 
 	if (image)
@@ -172,6 +175,11 @@ sp<Control> GraphicButton::copyTo(sp<Control> CopyParent)
 void GraphicButton::configureSelfFromXml(pugi::xml_node *node)
 {
 	Control::configureSelfFromXml(node);
+
+	if (auto scrollLarge = node->attribute("scrolllarge"))
+	{
+		this->scrollLarge = scrollLarge.as_bool();
+	}
 	auto imageNode = node->child("image");
 	if (imageNode)
 	{

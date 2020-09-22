@@ -65,7 +65,6 @@ void ResearchSelect::begin()
 	this->redrawResearchList();
 
 	auto research_list = form->findControlTyped<ListBox>("LIST");
-	research_list->AlwaysEmitSelectionEvents = true;
 
 	research_list->addCallback(FormEventType::ListBoxChangeSelected, [this](FormsEvent *e) {
 		LogInfo("Research selection change");
@@ -74,36 +73,49 @@ void ResearchSelect::begin()
 		if (topic->current_lab)
 		{
 			LogInfo("Topic already in progress");
-			return;
 		}
-		if (topic->isComplete())
+		else
 		{
-			LogInfo("Topic already complete");
-			auto message_box =
-			    mksp<MessageBox>(tr("PROJECT COMPLETE"), tr("This project is already complete."),
-			                     MessageBox::ButtonOptions::Ok);
-			fw().stageQueueCommand({StageCmd::Command::PUSH, message_box});
-			return;
+			if (topic->isComplete())
+			{
+				LogInfo("Topic already complete");
+				auto message_box = mksp<MessageBox>(tr("PROJECT COMPLETE"),
+				                                    tr("This project is already complete."),
+				                                    MessageBox::ButtonOptions::Ok);
+				fw().stageQueueCommand({StageCmd::Command::PUSH, message_box});
+				// Restore previous selection
+				list->setSelected(current_topic ? control_map[current_topic] : nullptr);
+				return;
+			}
+			if (topic->required_lab_size == ResearchTopic::LabSize::Large &&
+			    this->lab->size == ResearchTopic::LabSize::Small)
+			{
+				LogInfo("Topic is large and lab is small");
+				auto message_box =
+				    mksp<MessageBox>(tr("PROJECT TOO LARGE"),
+				                     tr("This project requires an advanced lab or workshop."),
+				                     MessageBox::ButtonOptions::Ok);
+				fw().stageQueueCommand({StageCmd::Command::PUSH, message_box});
+				// Restore previous selection
+				list->setSelected(current_topic ? control_map[current_topic] : nullptr);
+				return;
+			}
+			if (this->lab->type == ResearchTopic::Type::Engineering &&
+			    topic->cost > state->player->balance)
+			{
+				LogInfo("Cannot afford to manufacture");
+				auto message_box = mksp<MessageBox>(
+				    tr("FUNDS EXCEEDED"), tr("Production costs exceed your available funds."),
+				    MessageBox::ButtonOptions::Ok);
+				fw().stageQueueCommand({StageCmd::Command::PUSH, message_box});
+				// Restore previous selection
+				list->setSelected(current_topic ? control_map[current_topic] : nullptr);
+				return;
+			}
 		}
-		if (topic->required_lab_size == ResearchTopic::LabSize::Large &&
-		    this->lab->size == ResearchTopic::LabSize::Small)
+		if (current_topic && topic != current_topic)
 		{
-			LogInfo("Topic is large and lab is small");
-			auto message_box = mksp<MessageBox>(
-			    tr("PROJECT TOO LARGE"), tr("This project requires an advanced lab or workshop."),
-			    MessageBox::ButtonOptions::Ok);
-			fw().stageQueueCommand({StageCmd::Command::PUSH, message_box});
-			return;
-		}
-		if (this->lab->type == ResearchTopic::Type::Engineering &&
-		    topic->cost > state->player->balance)
-		{
-			LogInfo("Cannot afford to manufacture");
-			auto message_box = mksp<MessageBox>(tr("FUNDS EXCEEDED"),
-			                                    tr("Production costs exceed your available funds."),
-			                                    MessageBox::ButtonOptions::Ok);
-			fw().stageQueueCommand({StageCmd::Command::PUSH, message_box});
-			return;
+			control_map[current_topic]->setDirty();
 		}
 		current_topic = topic;
 		this->redrawResearchList();
@@ -313,6 +325,11 @@ void ResearchSelect::populateResearchList()
 		research_list->addItem(control);
 		control_map[t] = control;
 	}
+
+	if (current_topic)
+	{
+		research_list->setSelected(control_map[current_topic]);
+	}
 }
 
 void ResearchSelect::pause() {}
@@ -327,9 +344,10 @@ void ResearchSelect::eventOccurred(Event *e)
 
 	if (e->type() == EVENT_KEY_DOWN)
 	{
-		if (e->keyboard().KeyCode == SDLK_ESCAPE)
+		if (e->keyboard().KeyCode == SDLK_ESCAPE || e->keyboard().KeyCode == SDLK_RETURN ||
+		    e->keyboard().KeyCode == SDLK_KP_ENTER)
 		{
-			fw().stageQueueCommand({StageCmd::Command::POP});
+			form->findControl("BUTTON_OK")->click();
 			return;
 		}
 	}

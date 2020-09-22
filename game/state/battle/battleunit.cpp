@@ -35,7 +35,7 @@ static const std::set<TileObject::Type> mapPartSet = {
     TileObject::Type::Ground, TileObject::Type::LeftWall, TileObject::Type::RightWall,
     TileObject::Type::Feature};
 static const std::set<TileObject::Type> unitSet = {TileObject::Type::Unit};
-}
+} // namespace
 
 namespace
 {
@@ -45,9 +45,9 @@ static const std::map<Vec2<int>, int> facing_dir_map = {{{0, -1}, 0}, {{1, -1}, 
 static const std::map<int, Vec2<int>> dir_facing_map = {{0, {0, -1}}, {1, {1, -1}}, {2, {1, 0}},
                                                         {3, {1, 1}},  {4, {0, 1}},  {5, {-1, 1}},
                                                         {6, {-1, 0}}, {7, {-1, -1}}};
-}
+} // namespace
 
-sp<BattleUnit> BattleUnit::get(const GameState &state, const UString &id)
+template <> sp<BattleUnit> StateObject<BattleUnit>::get(const GameState &state, const UString &id)
 {
 	auto it = state.current_battle->units.find(id);
 	if (it == state.current_battle->units.end())
@@ -58,17 +58,18 @@ sp<BattleUnit> BattleUnit::get(const GameState &state, const UString &id)
 	return it->second;
 }
 
-const UString &BattleUnit::getPrefix()
+template <> const UString &StateObject<BattleUnit>::getPrefix()
 {
 	static UString prefix = "BATTLEUNIT_";
 	return prefix;
 }
-const UString &BattleUnit::getTypeName()
+template <> const UString &StateObject<BattleUnit>::getTypeName()
 {
 	static UString name = "BattleUnit";
 	return name;
 }
-const UString &BattleUnit::getId(const GameState &state, const sp<BattleUnit> ptr)
+template <>
+const UString &StateObject<BattleUnit>::getId(const GameState &state, const sp<BattleUnit> ptr)
 {
 	static const UString emptyString = "";
 	for (auto &a : state.current_battle->units)
@@ -76,7 +77,7 @@ const UString &BattleUnit::getId(const GameState &state, const sp<BattleUnit> pt
 		if (a.second == ptr)
 			return a.first;
 	}
-	LogError("No battleUnit matching pointer %p", ptr.get());
+	LogError("No battleUnit matching pointer %p", static_cast<void *>(ptr.get()));
 	return emptyString;
 }
 
@@ -272,7 +273,7 @@ bool BattleUnit::isWithinVision(Vec3<int> pos)
 	{
 		return false;
 	}
-	// Facing: Diagonalley
+	// Facing: Diagonally
 	if (facing.x != 0 && facing.y != 0)
 	{
 		// Nothing to be done, we already checked above
@@ -616,8 +617,9 @@ void BattleUnit::refreshUnitVision(GameState &state, bool forceBlind,
 				state.current_battle->notifyAction(vu->position, vu);
 			}
 		}
-		// battle and units's visible enemies list
-		if (owner->isRelatedTo(vu->owner) == Organisation::Relation::Hostile)
+		// battle and units's visible enemies list (Do not count civilians as enemy)
+		if (owner->isRelatedTo(vu->owner) == Organisation::Relation::Hostile &&
+		    vu->getAIType() != AIType::Civilian)
 		{
 			visibleEnemies.insert(vu);
 			battle.visibleEnemies[owner].insert(vu);
@@ -937,7 +939,8 @@ bool BattleUnit::hasLineToPosition(Vec3<float> targetPosition, bool useLOS) cons
 	// No map part blocks Line
 	return !cMap
 	       // No unit blocks Line
-	       && (!cUnit || owner->isRelatedTo(cUnit->owner) == Organisation::Relation::Hostile
+	       && (!cUnit ||
+	           owner->isRelatedTo(cUnit->owner) == Organisation::Relation::Hostile
 	           // If our head blocks brainsucker on it - no problem, hit will go versus brainsucker
 	           // anyway
 	           || cUnit->brainSucker);
@@ -1026,7 +1029,7 @@ bool BattleUnit::startAttackPsi(GameState &state, StateRef<BattleUnit> target, P
 	agent->modified_stats.psi_energy -= getPsiCost(status);
 	if (success)
 	{
-		fw().soundBackend->playSample(listRandomiser(state.rng, *psiSuccessSounds), position);
+		fw().soundBackend->playSample(pickRandom(state.rng, *psiSuccessSounds), position);
 		if (!realTime)
 		{
 			psiTarget->applyPsiAttack(state, *this, psiStatus, psiItem, false);
@@ -1039,7 +1042,7 @@ bool BattleUnit::startAttackPsi(GameState &state, StateRef<BattleUnit> target, P
 	}
 	else
 	{
-		fw().soundBackend->playSample(listRandomiser(state.rng, *psiFailSounds), position);
+		fw().soundBackend->playSample(pickRandom(state.rng, *psiFailSounds), position);
 		return false;
 	}
 }
@@ -1593,8 +1596,7 @@ void BattleUnit::applyDamageDirect(GameState &state, int damage, bool generateFa
 			    !agent->type->fatalWoundSfx.at(agent->gender).empty())
 			{
 				fw().soundBackend->playSample(
-				    listRandomiser(state.rng, agent->type->fatalWoundSfx.at(agent->gender)),
-				    position);
+				    pickRandom(state.rng, agent->type->fatalWoundSfx.at(agent->gender)), position);
 			}
 		}
 		// Emit sound wound
@@ -1604,7 +1606,7 @@ void BattleUnit::applyDamageDirect(GameState &state, int damage, bool generateFa
 			    !agent->type->damageSfx.at(agent->gender).empty())
 			{
 				fw().soundBackend->playSample(
-				    listRandomiser(state.rng, agent->type->damageSfx.at(agent->gender)), position);
+				    pickRandom(state.rng, agent->type->damageSfx.at(agent->gender)), position);
 			}
 		}
 	}
@@ -1617,7 +1619,7 @@ bool BattleUnit::applyDamage(GameState &state, int power, StateRef<DamageType> d
 {
 	if (damageType->doesImpactDamage())
 	{
-		fw().soundBackend->playSample(listRandomiser(state.rng, *genericHitSounds), position);
+		fw().soundBackend->playSample(pickRandom(state.rng, *genericHitSounds), position);
 	}
 
 	// Calculate damage
@@ -1634,7 +1636,7 @@ bool BattleUnit::applyDamage(GameState &state, int power, StateRef<DamageType> d
 			case DamageSource::Impact:
 			{
 				static const std::list<int> damageDistribution = {0, 5, 6, 7, 8, 9, 10};
-				damage = listRandomiser(state.rng, damageDistribution);
+				damage = pickRandom(state.rng, damageDistribution);
 				break;
 			}
 			case DamageSource::Hazard:
@@ -1726,6 +1728,15 @@ bool BattleUnit::applyDamage(GameState &state, int power, StateRef<DamageType> d
 	// Smoke ignores armor value but does not ignore damage modifier
 	damage = damageType->dealDamage(damage, damageModifier) -
 	         (damageType->ignoresArmorValue() ? 0 : armorValue);
+
+	if (this->owner == state.getPlayer())
+	{
+		damage = (double)damage * config().getFloat("OpenApoc.Cheat.DamageReceivedMultiplier");
+	}
+	if (attacker && attacker->owner == state.getPlayer())
+	{
+		damage = (double)damage * config().getFloat("OpenApoc.Cheat.DamageInflictedMultiplier");
+	}
 
 	// No damage
 	if (damage <= 0)
@@ -1978,7 +1989,7 @@ void BattleUnit::updateTB(GameState &state)
 	updateRegen(state, TICKS_REGEN_PER_TURN);
 }
 
-void BattleUnit::updateCloak(GameState &state, unsigned int ticks)
+void BattleUnit::updateCloak(GameState &state [[maybe_unused]], unsigned int ticks)
 {
 	if (isConscious())
 	{
@@ -2330,6 +2341,10 @@ void BattleUnit::updateGiveWay(GameState &state)
 						// Try the new heading
 						Vec3<int> pos = {position.x + newHeading.x, position.y + newHeading.y,
 						                 position.z + z};
+
+						if (!tileObject->map.isTileInBounds(pos))
+							continue;
+
 						auto to = tileObject->map.getTile(pos);
 						// Check if heading on our level is acceptable
 						bool acceptable =
@@ -2519,8 +2534,7 @@ void BattleUnit::updateCrying(GameState &state)
 			return;
 		}
 		// Actually cry
-		fw().soundBackend->playSample(listRandomiser(state.rng, agent->type->crySfx),
-		                              getPosition());
+		fw().soundBackend->playSample(pickRandom(state.rng, agent->type->crySfx), getPosition());
 	}
 }
 
@@ -2897,10 +2911,9 @@ void BattleUnit::updateMovementNormal(GameState &state, unsigned int &moveTicksR
 		{
 			if (flyingSpeedModifier != 100)
 			{
-				flyingSpeedModifier = std::min((unsigned)100,
-				                               flyingSpeedModifier +
-				                                   moveTicksRemaining / moveTicksConsumeRate /
-				                                       FLYING_ACCELERATION_DIVISOR);
+				flyingSpeedModifier = std::min(
+				    (unsigned)100, flyingSpeedModifier + moveTicksRemaining / moveTicksConsumeRate /
+				                                             FLYING_ACCELERATION_DIVISOR);
 			}
 			movementTicksAccumulated = moveTicksRemaining / moveTicksConsumeRate;
 			auto dir = glm::normalize(vectorToGoal);
@@ -2922,9 +2935,9 @@ void BattleUnit::updateMovementNormal(GameState &state, unsigned int &moveTicksR
 				movementTicksAccumulated = distanceToGoal;
 				if (flyingSpeedModifier != 100)
 				{
-					flyingSpeedModifier = std::min(
-					    (unsigned)100,
-					    flyingSpeedModifier + distanceToGoal / FLYING_ACCELERATION_DIVISOR);
+					flyingSpeedModifier =
+					    std::min((unsigned)100, flyingSpeedModifier +
+					                                distanceToGoal / FLYING_ACCELERATION_DIVISOR);
 				}
 				moveTicksRemaining -= distanceToGoal * moveTicksConsumeRate;
 				setPosition(state, goalPosition, true);
@@ -2938,7 +2951,7 @@ void BattleUnit::updateMovementNormal(GameState &state, unsigned int &moveTicksR
 			}
 		}
 
-		// Scale ticks so that animations look proper on isometric sceen
+		// Scale ticks so that animations look proper on isometric screen
 		// facing down or up on screen
 		if (facing.x == facing.y)
 		{
@@ -3124,9 +3137,9 @@ void BattleUnit::updateTurning(GameState &state, unsigned int &turnTicksRemainin
 		// If firing then consume turning ticks since we can't turn while firing
 		if (firing_animation_ticks_remaining > 0)
 		{
-			// If firing animation will be finished this time, then substract
+			// If firing animation will be finished this time, then subtract
 			// the amount of ticks required to finish it
-			// Otherwise substract all ticks
+			// Otherwise subtract all ticks
 			turnTicksRemaining -= handsTicksRemaining >= firing_animation_ticks_remaining
 			                          ? firing_animation_ticks_remaining
 			                          : turnTicksRemaining;
@@ -3237,7 +3250,7 @@ bool BattleUnit::updateAttackingRunCanFireChecks(GameState &state, unsigned int 
 	// and track (turn to) target unit if it's visible
 
 	// Note:
-	// - If target is a unit, this check is done regularily
+	// - If target is a unit, this check is done regularly
 	// - If target is a tile, this check will only be done once after start,
 	//   and again once each time this unit stops moving
 	if (ticksUntillNextTargetCheck == 0)
@@ -3447,7 +3460,7 @@ void BattleUnit::updateFiring(GameState &state, sp<AEquipment> &weaponLeft,
 		beginHandStateChange(HandState::Aiming);
 	}
 
-	// Should we beging fire delay countdown?
+	// Should we begin fire delay countdown?
 	if (target_hand_state == HandState::Aiming)
 	{
 		if (weaponRight && !weaponRight->isFiring())
@@ -3694,6 +3707,12 @@ void BattleUnit::triggerProximity(GameState &state)
 
 void BattleUnit::triggerBrainsuckers(GameState &state)
 {
+	// Androids do not trigger brainsuckers
+	if (this->agent->type->immuneToBrainsuckers)
+	{
+		return;
+	}
+
 	StateRef<DamageType> brainsucker = {&state, "DAMAGETYPE_BRAINSUCKER"};
 	if (brainsucker->dealDamage(100, agent->type->damage_modifier) == 0)
 		return;
@@ -3950,7 +3969,7 @@ void BattleUnit::applyEnzymeEffect(GameState &state)
 	// Damage random item
 	if (agent->type->inventory && !agent->equipment.empty())
 	{
-		auto item = listRandomiser(state.rng, agent->equipment);
+		auto item = pickRandom(state.rng, agent->equipment);
 		item->armor -= enzymeDebuffIntensity / 2;
 
 		// Item destroyed
@@ -4048,9 +4067,9 @@ void BattleUnit::processExperience(GameState &state)
 	{
 		if (state.current_battle->mode == Battle::Mode::TurnBased)
 		{
-			agent->current_stats.reactions += rollForPrimaryStat(
-			    state,
-			    experiencePoints.reactions * agent->type->improvementPercentagePhysical / 100);
+			agent->current_stats.reactions +=
+			    rollForPrimaryStat(state, experiencePoints.reactions *
+			                                  agent->type->improvementPercentagePhysical / 100);
 		}
 		else
 		{
@@ -4064,7 +4083,7 @@ void BattleUnit::processExperience(GameState &state)
 		    10 * randBoundsExclusive(state.rng, 0, 99) <
 		    experiencePoints.bravery * 9 * agent->type->improvementPercentagePhysical / 100;
 	}
-	// Units with slower improvement rates need to gain more xp to have a chance to iprove
+	// Units with slower improvement rates need to gain more xp to have a chance to improve
 	// >= 100% improvement rate need just 1 xp
 	// 50% improvement rate needs 2 xp
 	// 10% improvement rate needs 10 xp
@@ -4359,7 +4378,7 @@ void BattleUnit::tryToRiseUp(GameState &state)
 		}
 		else
 		{
-			// Prone only unit ignores wether prone is allowed
+			// Prone only unit ignores whether prone is allowed
 			targetState = BodyState::Prone;
 		}
 	}
@@ -4397,7 +4416,7 @@ void BattleUnit::dropDown(GameState &state)
 	moraleState = MoraleState::Normal;
 	BodyState targetState = isDead() ? BodyState::Dead : BodyState::Downed;
 	// Check if we can drop from current state
-	// Adjust current state so that we canthen drop down
+	// Adjust current state so that we can then drop down
 	BodyState proposedBodyState = current_body_state;
 	while (agent->getAnimationPack()->getFrameCountBody(displayedItem, proposedBodyState,
 	                                                    targetState, current_hand_state,
@@ -4464,7 +4483,11 @@ void BattleUnit::dropDown(GameState &state)
 		}
 	}
 
-	// Remove from list of visible units
+	this->markUnVisible(state);
+}
+
+void BattleUnit::markUnVisible(GameState &state)
+{ // Remove from list of visible units
 	StateRef<BattleUnit> srThis = {&state, id};
 	for (auto &units : state.current_battle->visibleUnits)
 	{
@@ -4492,6 +4515,7 @@ void BattleUnit::dropDown(GameState &state)
 
 void BattleUnit::retreat(GameState &state)
 {
+	this->markUnVisible(state);
 	if (shadowObject)
 	{
 		shadowObject->removeFromMap();
@@ -4505,7 +4529,7 @@ void BattleUnit::retreat(GameState &state)
 	state.current_battle->checkMissionEnd(state, true);
 }
 
-bool BattleUnit::useSpawner(GameState &state, sp<AEquipmentType> item)
+bool BattleUnit::useSpawner(GameState &state, const AEquipmentType &item)
 {
 	std::list<Vec3<int>> posToCheck;
 	Vec3<int> curPos = position;
@@ -4524,7 +4548,7 @@ bool BattleUnit::useSpawner(GameState &state, sp<AEquipmentType> item)
 	std::list<Vec3<int>> posToSpawn;
 	posToSpawn.push_back(curPos);
 	int numToSpawn = -1;
-	for (auto &entry : item->spawnList)
+	for (const auto &entry : item.spawnList)
 	{
 		numToSpawn += entry.second;
 	}
@@ -4546,7 +4570,7 @@ bool BattleUnit::useSpawner(GameState &state, sp<AEquipmentType> item)
 		}
 	}
 	auto aliens = state.getAliens();
-	for (auto &entry : item->spawnList)
+	for (const auto &entry : item.spawnList)
 	{
 		for (int i = 0; i < entry.second; i++)
 		{
@@ -4568,6 +4592,7 @@ void BattleUnit::die(GameState &state, StateRef<BattleUnit> attacker, bool viole
 {
 	auto attackerOrg = attacker ? attacker->agent->owner : nullptr;
 	auto ourOrg = agent->owner;
+	bool destroy = false;
 	// Violent deaths (spawn stuff, blow up)
 	if (violently)
 	{
@@ -4581,10 +4606,11 @@ void BattleUnit::die(GameState &state, StateRef<BattleUnit> attacker, bool viole
 					                                   e->type->damage_type->explosionDoodad,
 					                                   e->type->damage_type, e->type->damage,
 					                                   e->type->explosion_depletion_rate, owner);
+					destroy = true;
 					break;
 				case AEquipmentType::Type::Spawner:
 				{
-					useSpawner(state, e->type);
+					useSpawner(state, *e->type);
 					break;
 				}
 				default:
@@ -4602,8 +4628,8 @@ void BattleUnit::die(GameState &state, StateRef<BattleUnit> attacker, bool viole
 	if (agent->type->dieSfx.find(agent->gender) != agent->type->dieSfx.end() &&
 	    !agent->type->dieSfx.at(agent->gender).empty())
 	{
-		fw().soundBackend->playSample(
-		    listRandomiser(state.rng, agent->type->dieSfx.at(agent->gender)), position);
+		fw().soundBackend->playSample(pickRandom(state.rng, agent->type->dieSfx.at(agent->gender)),
+		                              position);
 	}
 	// Morale and score
 	auto player = state.getPlayer();
@@ -4727,8 +4753,22 @@ void BattleUnit::die(GameState &state, StateRef<BattleUnit> attacker, bool viole
 	removeFromSquad(*state.current_battle);
 	// Agent also dies
 	agent->die(state);
-	// Animate body
-	dropDown(state);
+	if (!destroy)
+	{
+		// Animate body
+		dropDown(state);
+	}
+	else
+	{
+		// Remove body
+		markUnVisible(state);
+		if (shadowObject)
+		{
+			shadowObject->removeFromMap();
+		}
+		tileObject->removeFromMap();
+		destroyed = true;
+	}
 }
 
 void BattleUnit::fallUnconscious(GameState &state, StateRef<BattleUnit> attacker)
@@ -5822,4 +5862,4 @@ bool BattleUnit::addMission(GameState &state, BattleUnitMission *mission, bool t
 	}
 	return !mission->cancelled;
 }
-}
+} // namespace OpenApoc

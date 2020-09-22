@@ -135,8 +135,8 @@ int main(int argc, char **argv)
 
 	LogInfo("Testing started inited state");
 	state->initState();
-	state->fillOrgStartingProperty();
 	state->fillPlayerStartingProperty();
+	state->fillOrgStartingProperty();
 
 	if (!test_gamestate_serialization(state))
 	{
@@ -172,7 +172,7 @@ int main(int argc, char **argv)
 		}
 		LogInfo("Using vehicle map for \"%s\"", vType->name);
 		v->type = {state.get(), vType};
-		v->name = format("%s %d", v->type->name, ++v->type->numCreated);
+		v->name = OpenApoc::format("%s %d", v->type->name, ++v->type->numCreated);
 		state->vehicles[vID] = v;
 
 		OpenApoc::StateRef<OpenApoc::Vehicle> enemyVehicle = {state.get(), vID};

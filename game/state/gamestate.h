@@ -4,6 +4,7 @@
 #include "game/state/city/research.h"
 #include "game/state/gameeventtypes.h"
 #include "game/state/gametime.h"
+#include "game/state/luagamestate.h"
 #include "game/state/shared/agent.h"
 #include "game/state/stateobject.h"
 #include "library/sp.h"
@@ -80,6 +81,7 @@ class GameState : public std::enable_shared_from_this<GameState>
 	StateRefMap<Base> player_bases;
 	StateRefMap<City> cities;
 	StateRefMap<Vehicle> vehicles;
+	std::set<UString> vehiclesDeathNote;
 	StateRefMap<UfopaediaCategory> ufopaedia;
 	ResearchState research;
 	StateRefMap<BattleMap> battle_maps;
@@ -103,6 +105,7 @@ class GameState : public std::enable_shared_from_this<GameState>
 
 	std::list<EventMessage> messages;
 
+	int baseIndex = 1;
 	int difficulty = 0;
 	bool firstDetection = false;
 	uint64_t nextInvasion = 0;
@@ -116,7 +119,8 @@ class GameState : public std::enable_shared_from_this<GameState>
 	std::map<AgentType::Role, unsigned> initial_agents;
 	std::map<UString, unsigned> initial_facilities;
 	std::list<std::list<StateRef<AEquipmentType>>> initial_agent_equipment;
-	std::list<std::pair<StateRef<VehicleType>, int>> initial_vehicles;
+	std::list<std::pair<StateRef<VehicleType>, std::list<StateRef<VEquipmentType>>>>
+	    initial_vehicles;
 	std::list<std::pair<StateRef<VEquipmentType>, int>> initial_vehicle_equipment;
 	std::list<std::pair<StateRef<VAmmoType>, int>> initial_vehicle_ammo;
 	std::map<UString, int> initial_base_agent_equipment;
@@ -143,7 +147,7 @@ class GameState : public std::enable_shared_from_this<GameState>
 	GameTime gameTimeBeforeBattle = GameTime(0);
 	UString missionLocationBattle;
 	UString eventFromBattleText;
-	GameEventType eventFromBattle;
+	GameEventType eventFromBattle = GameEventType::None;
 
 	// Used to generate unique names, an incrementing ID for each object type (keyed by StateObject
 	// prefix)
@@ -175,12 +179,17 @@ class GameState : public std::enable_shared_from_this<GameState>
 	// high level api for saving game
 	// WARNING! Does not save metadata
 	bool saveGame(const UString &path, bool pack = true, bool pretty = false);
+	bool saveGameDelta(const UString &path, const GameState &reference, bool pack = true,
+	                   bool pretty = false);
 
 	// serializes gamestate to archive
-	bool serialize(sp<SerializationArchive> archive) const;
+	bool serialize(SerializationArchive *archive) const;
+	// Serializes gamestate to archive with a reference (IE values the same as the reference are not
+	// saved)
+	bool serialize(SerializationArchive *archive, const GameState &reference) const;
 
 	// deserializes gamestate from archive
-	bool deserialize(const sp<SerializationArchive> archive);
+	bool deserialize(SerializationArchive *archive);
 
 	// Called on a newly started Game to setup initial state that isn't serialized in (random
 	// vehicle positions etc.) - it is not called
@@ -204,9 +213,6 @@ class GameState : public std::enable_shared_from_this<GameState>
 	// Fills out initial player property
 	void fillPlayerStartingProperty();
 
-	void updateEconomy();
-	void updateUFOGrowth();
-
 	void invasion();
 
 	// Returns true if we can go at max speed (IE push all update loops to 5 minute intervals -
@@ -216,6 +222,8 @@ class GameState : public std::enable_shared_from_this<GameState>
 	// - there are any projectiles on the current map
 	bool canTurbo() const;
 
+	// Immediately remove all dead objects.
+	void cleanUpDeathNote();
 	// Update progress
 	void update(unsigned int ticks);
 	// updateTurbo progresses 5 minutes at a time - can only be called if canTurbo() returns true.
@@ -227,7 +235,7 @@ class GameState : public std::enable_shared_from_this<GameState>
 	void updateAfterTurbo();
 
 	void updateBeforeBattle();
-	void upateAfterBattle();
+	void updateAfterBattle();
 
 	void updateEndOfSecond();
 	void updateEndOfFiveMinutes();
@@ -235,11 +243,22 @@ class GameState : public std::enable_shared_from_this<GameState>
 	void updateEndOfDay();
 	void updateEndOfWeek();
 
+	void updateHumanEconomy();
+
 	void logEvent(GameEvent *ev);
 
 	// Following members are not serialized
 	bool newGame = false;
 	bool skipTurboCalculations = false;
+
+	LuaGameState luaGameState;
+
+	// Loads all mods set in the options - note this likely requires the mod data directories to
+	// already be added to the filesystem
+	void loadMods();
+	// appends a GameState package from "submodPath", relative to the currently set data directories
+	// Returns true on success, false on failure
+	bool appendGameState(const UString &gamestatePath);
 };
 
 }; // namespace OpenApoc

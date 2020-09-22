@@ -1,6 +1,7 @@
 #pragma once
 
 #include "game/state/city/research.h"
+#include "game/state/rules/agenttype.h"
 #include "game/state/stateobject.h"
 #include "library/sp.h"
 #include "library/strings.h"
@@ -20,7 +21,7 @@ class Organisation;
 class DamageType;
 class DamageModifier;
 class AgentType;
-enum class BodyPart;
+class UfopaediaEntry;
 
 enum class TriggerType
 {
@@ -31,9 +32,8 @@ enum class TriggerType
 	Boomeroid
 };
 
-class AEquipmentType : public StateObject
+class AEquipmentType : public StateObject<AEquipmentType>
 {
-	STATE_OBJECT(AEquipmentType)
   public:
 	enum class Type
 	{
@@ -63,7 +63,7 @@ class AEquipmentType : public StateObject
 		Loot
 	};
 
-	AEquipmentType();
+	AEquipmentType() = default;
 	~AEquipmentType() override = default;
 
 	// Shared stuff
@@ -73,17 +73,17 @@ class AEquipmentType : public StateObject
 	int weight = 0;
 	StateRef<BattleUnitImagePack> held_image_pack;
 	sp<Image> dropped_sprite;
-	Vec2<float> dropped_offset;
+	Vec2<float> dropped_offset = {0, 0};
 	sp<Image> dropped_shadow_sprite;
-	Vec2<float> shadow_offset;
+	Vec2<float> shadow_offset = {0, 0};
 	sp<Image> equipscreen_sprite;
-	Vec2<int> equipscreen_size;
+	Vec2<int> equipscreen_size = {0, 0};
 	StateRef<Organisation> manufacturer;
 	int store_space = 0;
 	int armor = 0;
 	int score = 0;
 	ResearchDependency research_dependency;
-	// Wether item is carried two-handed (for display purposes)
+	// Whether item is carried two-handed (for display purposes)
 	bool two_handed = false;
 
 	// Item goes to alien containment
@@ -101,16 +101,16 @@ class AEquipmentType : public StateObject
 	// Armor only
 	sp<Image> body_sprite;
 	StateRef<DamageModifier> damage_modifier;
-	BodyPart body_part;
+	BodyPart body_part = BodyPart::Body;
 	StateRef<BattleUnitImagePack> body_image_pack;
 	bool provides_flight = false;
 
 	// Weapon & Grenade only
 	// For weapons with built-in ammo and for grenades leave this empty
-	// This is not stored in files, but rather filled in gamestate inint
+	// This is not stored in files, but rather filled in gamestate init
 	// In files we only store ammo's link to the weapon
 	// This way, modders can introduce ammunition for existing weapons without having mod conflicts
-	std::list<StateRef<AEquipmentType>> ammo_types;
+	std::set<StateRef<AEquipmentType>> ammo_types;
 
 	// Ammo only
 	std::list<StateRef<AEquipmentType>> weapon_types;
@@ -128,24 +128,26 @@ class AEquipmentType : public StateObject
 	int accuracy = 0;
 
 	/* This is how many ticks it takes to fire a single shot.
-	*
-	* For fire rate displayed ingame (equipment screen), formula is 1000/FEDL
-	* For example:
-	* Ingame Toxigun has 125, in file it has 8, 125*8=1000.
-	* Ingame Minigun has 83, in file it has 12, 83*12=996. (rounding 1000/12 down makes it 83)
-	*
-	* For fire rate displayed ingame (ufopaedia screen), formula is 36/FEDL
-	* For example:
-	* Ingame Toxigun has 4.50r/s, in file it has 8, 36/8 = 4.5
-	* Ingame Minigun has 3.00r/s, in file it has 12, 36/12 = 3
-	*
-	* Fire rate expects game ticks to be 36 per second
-	* since we have 144 ticks per second, when using this multiply it by 4 to get actual amount
-	* of ticks required to fire
-	*
-	* Since playable alpha 0.1 this is already in OpenApoc ticks
-	*/
+	 *
+	 * For fire rate displayed ingame (equipment screen), formula is 1000/FEDL
+	 * For example:
+	 * Ingame Toxigun has 125, in file it has 8, 125*8=1000.
+	 * Ingame Minigun has 83, in file it has 12, 83*12=996. (rounding 1000/12 down makes it 83)
+	 *
+	 * For fire rate displayed ingame (ufopaedia screen), formula is 36/FEDL
+	 * For example:
+	 * Ingame Toxigun has 4.50r/s, in file it has 8, 36/8 = 4.5
+	 * Ingame Minigun has 3.00r/s, in file it has 12, 36/12 = 3
+	 *
+	 * Fire rate expects game ticks to be 36 per second
+	 * since we have 144 ticks per second, when using this multiply it by 4 to get actual amount
+	 * of ticks required to fire
+	 *
+	 * Since playable alpha 0.1 this is already in OpenApoc ticks
+	 */
 	int fire_delay = 0;
+	float getRoundsPerSecond() const;
+
 	// This is used for aliens with firing animations that have pre-fire frames
 	// Like spitter that first throws his tube forward and only then emits a shot
 	// This will
@@ -156,6 +158,10 @@ class AEquipmentType : public StateObject
 	// Ingame displayed value is this divided by 16 rounded down. Range in tiles
 	// Since it's range in tiles, it must be divided by 24 to get the actual range!
 	int range = 0;
+	/* returns tiles */
+	int getRangeInTiles() const;
+	int getRangeInMetres() const;
+
 	// Projectile's Time To Live, in voxels travelled
 	float ttl = 0.0f;
 	StateRef<DoodadType> explosion_graphic;
@@ -171,9 +177,8 @@ class AEquipmentType : public StateObject
 	bool canBeUsed(GameState &state, StateRef<Organisation> user) const;
 };
 
-class EquipmentSet : public StateObject
+class EquipmentSet : public StateObject<EquipmentSet>
 {
-	STATE_OBJECT(EquipmentSet)
   public:
 	class WeaponData
 	{
@@ -225,7 +230,7 @@ class EquipmentSet : public StateObject
 	std::vector<GrenadeData> grenades;
 	std::vector<EquipmentData> equipment;
 
-	std::list<sp<AEquipmentType>> generateEquipmentList(GameState &state);
+	std::list<const AEquipmentType *> generateEquipmentList(GameState &state);
 
 	static sp<EquipmentSet> getByScore(const GameState &state, const int score);
 	static sp<EquipmentSet> getByLevel(const GameState &state, const int level);

@@ -6,7 +6,6 @@
 #include "framework/keycodes.h"
 #include "framework/palette.h"
 #include "framework/renderer.h"
-#include "framework/trace.h"
 #include "game/state/city/agentmission.h"
 #include "game/state/city/base.h"
 #include "game/state/city/building.h"
@@ -29,10 +28,10 @@ namespace OpenApoc
 CityTileView::CityTileView(TileMap &map, Vec3<int> isoTileSize, Vec2<int> stratTileSize,
                            TileViewMode initialMode, Vec3<float> screenCenterTile,
                            GameState &gameState)
-    : TileView(map, isoTileSize, stratTileSize, initialMode), state(gameState),
+    : TileView(map, isoTileSize, stratTileSize, initialMode),
       day_palette(fw().data->loadPalette("xcom3/ufodata/pal_01.dat")),
       twilight_palette(fw().data->loadPalette("xcom3/ufodata/pal_02.dat")),
-      night_palette(fw().data->loadPalette("xcom3/ufodata/pal_03.dat"))
+      night_palette(fw().data->loadPalette("xcom3/ufodata/pal_03.dat")), state(gameState)
 {
 	std::vector<sp<Palette>> newPal;
 	newPal.resize(3);
@@ -67,6 +66,8 @@ CityTileView::CityTileView(TileMap &map, Vec3<int> isoTileSize, Vec2<int> stratT
 		mod_day_palette.push_back(newPal[0]);
 		mod_twilight_palette.push_back(newPal[1]);
 		mod_night_palette.push_back(newPal[2]);
+		mod_interpolated_palette.push_back(mksp<Palette>());
+		interpolated_palette_minute.push_back(0);
 	}
 
 	selectedTileImageBack = fw().data->loadImage("city/selected-citytile-back.png");
@@ -294,10 +295,8 @@ void CityTileView::eventOccurred(Event *e)
 
 void CityTileView::render()
 {
-	TRACE_FN;
 	Renderer &r = *fw().renderer;
 	r.clear();
-	r.setPalette(this->pal);
 
 	// Rotate Icons
 	{
@@ -325,6 +324,8 @@ void CityTileView::render()
 	{
 		case TileViewMode::Isometric:
 		{
+			r.setPalette(this->pal);
+
 			// List of vehicles that require drawing of brackets
 			std::set<sp<Vehicle>> vehiclesToDrawBrackets;
 			std::map<sp<Vehicle>, int> vehiclesBracketsIndex;
@@ -542,11 +543,13 @@ void CityTileView::render()
 		break;
 		case TileViewMode::Strategy:
 		{
+			r.setPalette(mod_day_palette[colorCurrent]);
+
 			// Params are: friendly, hostile, selected (0 = not, 1 = small, 2 = large)
 			std::list<std::tuple<sp<Vehicle>, bool, bool, int>> vehiclesToDraw;
 			std::set<sp<Vehicle>> vehiclesUnderAttack;
 			std::set<sp<Building>> buildingsSelected;
-			// Lines to draw between unit and destination, bool is wether target x is drawn
+			// Lines to draw between unit and destination, bool is whether target x is drawn
 			std::list<std::tuple<Vec3<float>, Vec3<float>, bool, bool>> targetLocationsToDraw;
 
 			for (int z = 0; z < maxZDraw; z++)
@@ -689,11 +692,6 @@ void CityTileView::render()
 				{
 					continue;
 				}
-				bool selected =
-				    std::find(state.current_city->cityViewSelectedAgents.begin(),
-				              state.current_city->cityViewSelectedAgents.end(),
-				              a.second) != state.current_city->cityViewSelectedAgents.end();
-
 				for (auto &m : a.second->missions)
 				{
 					if (m->type == AgentMission::MissionType::GotoBuilding)
@@ -734,7 +732,10 @@ void CityTileView::render()
 					switch (m->type)
 					{
 						case VehicleMission::MissionType::AttackVehicle:
+						case VehicleMission::MissionType::RecoverVehicle:
 						{
+							if (!m->targetVehicle)
+								break;
 							vehiclesUnderAttack.insert(m->targetVehicle);
 							targetLocationsToDraw.emplace_back(m->targetVehicle->position,
 							                                   v.second->position, false, true);
@@ -742,14 +743,22 @@ void CityTileView::render()
 						}
 						case VehicleMission::MissionType::FollowVehicle:
 						{
+							if (!m->targetVehicle)
+								break;
 							targetLocationsToDraw.emplace_back(m->targetVehicle->position,
 							                                   v.second->position, false, false);
 							break;
 						}
 						case VehicleMission::MissionType::AttackBuilding:
 						case VehicleMission::MissionType::GotoBuilding:
-							buildingsSelected.insert(m->targetBuilding);
-						// Intentional fall-through
+						case VehicleMission::MissionType::Land:
+						case VehicleMission::MissionType::OfferService:
+						case VehicleMission::MissionType::InvestigateBuilding:
+							if (m->targetBuilding)
+							{
+								buildingsSelected.insert(m->targetBuilding);
+							}
+							[[fallthrough]];
 						case VehicleMission::MissionType::Crash:
 						{
 							if (!m->currentPlannedPath.empty())
@@ -765,10 +774,21 @@ void CityTileView::render()
 						case VehicleMission::MissionType::InfiltrateSubvert:
 						case VehicleMission::MissionType::Patrol:
 						case VehicleMission::MissionType::GotoPortal:
+						case VehicleMission::MissionType::Teleport:
+						case VehicleMission::MissionType::DepartToSpace:
 						{
 							targetLocationsToDraw.emplace_back((Vec3<float>)m->targetLocation +
 							                                       Vec3<float>{0.5f, 0.5f, 0.0f},
 							                                   v.second->position, true, false);
+							break;
+						}
+						case VehicleMission::MissionType::Snooze:
+						case VehicleMission::MissionType::RestartNextMission:
+						case VehicleMission::MissionType::TakeOff:
+						case VehicleMission::MissionType::SelfDestruct:
+						case VehicleMission::MissionType::ArriveFromDimensionGate:
+						{
+							// These have no destination to draw
 							break;
 						}
 					}
@@ -827,9 +847,8 @@ void CityTileView::render()
 				auto portalImage =
 				    state.city_common_image_list->portalStrategic[portalImageTicksAccumulated /
 				                                                  PORTAL_FRAME_ANIMATION_DELAY];
-				r.draw(portalImage,
-				       tileToOffsetScreenCoords(p->position) -
-				           (Vec2<float>)portalImage->size / 2.0f);
+				r.draw(portalImage, tileToOffsetScreenCoords(p->position) -
+				                        (Vec2<float>)portalImage->size / 2.0f);
 			}
 			// Draw vehicle icons
 			for (auto &obj : vehiclesToDraw)
@@ -936,10 +955,9 @@ void CityTileView::render()
 					// Eventually scale to 1/2 the size, but start with some bonus time of full
 					// size,
 					// so that it doesn't become distorted immediately, that's why we add extra 0.05
-					float radius = std::min(initialRadius,
-					                        initialRadius * (float)nearestExpiry /
-					                                (float)TICKS_CARGO_TTL / 2.0f +
-					                            0.55f);
+					float radius = std::min(initialRadius, initialRadius * (float)nearestExpiry /
+					                                               (float)TICKS_CARGO_TTL / 2.0f +
+					                                           0.55f);
 					Vec2<float> pos = tileToOffsetScreenCoords(
 					    Vec3<int>{(b.second->bounds.p0.x + b.second->bounds.p1.x) / 2,
 					              (b.second->bounds.p0.y + b.second->bounds.p1.y) / 2, 2});
@@ -980,17 +998,18 @@ void CityTileView::render()
 		break;
 	}
 }
+
 void CityTileView::update()
 {
 	TileView::update();
 	counter = (counter + 1) % COUNTER_MAX;
 
 	// Pulsate palette colors
-	colorCurrent += (colorForward ? 1 : -1);
+	colorCurrent += colorForward;
 	if (colorCurrent <= 0 || colorCurrent >= 15)
 	{
 		colorCurrent = clamp(colorCurrent, 0, 15);
-		colorForward = !colorForward;
+		colorForward = -colorForward;
 	}
 
 	// The palette fades from pal_03 at 3am to pal_02 at 6am then pal_01 at 9am
@@ -1002,22 +1021,34 @@ void CityTileView::update()
 	{
 		hour = 12;
 	}
-	sp<Palette> interpolated_palette;
+
 	if (hour < 3 || hour >= 21)
 	{
-		interpolated_palette = this->mod_night_palette[colorCurrent];
+		this->pal = this->mod_night_palette[colorCurrent];
 	}
 	else if (hour >= 9 && hour < 15)
 	{
-		interpolated_palette = this->mod_day_palette[colorCurrent];
+		this->pal = this->mod_day_palette[colorCurrent];
 	}
 	else
 	{
+		this->pal = this->mod_interpolated_palette[colorCurrent];
+
+		int minute = hour * 60 + state.gameTime.getMinutes();
+		if (std::abs(minute - interpolated_palette_minute[colorCurrent]) < 2)
+		{
+			return;
+		}
+
+		// recalc interpolated_palette every 2 minute
+		interpolated_palette_minute[colorCurrent] = minute;
+		mod_interpolated_palette[colorCurrent]->rendererPrivateData = nullptr;
+
 		sp<Palette> palette1;
 		sp<Palette> palette2;
 		float factor = 0;
-
-		float hours_float = hour + (float)state.gameTime.getMinutes() / 60.0f;
+		// TODO: use integer calculation instead
+		float hours_float = (float)minute / 60.0f;
 
 		if (hour >= 3 && hour < 6)
 		{
@@ -1048,7 +1079,6 @@ void CityTileView::update()
 			LogError("Unhandled hoursClamped %d", hour);
 		}
 
-		interpolated_palette = mksp<Palette>();
 		for (int i = 0; i < 256; i++)
 		{
 			auto &colour1 = palette1->getColour(i);
@@ -1059,10 +1089,8 @@ void CityTileView::update()
 			interpolated_colour.g = (int)mix((float)colour1.g, (float)colour2.g, factor);
 			interpolated_colour.b = (int)mix((float)colour1.b, (float)colour2.b, factor);
 			interpolated_colour.a = (int)mix((float)colour1.a, (float)colour2.a, factor);
-			interpolated_palette->setColour(i, interpolated_colour);
+			mod_interpolated_palette[colorCurrent]->setColour(i, interpolated_colour);
 		}
 	}
-
-	this->pal = interpolated_palette;
 }
-}
+} // namespace OpenApoc

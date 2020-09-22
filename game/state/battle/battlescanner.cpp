@@ -10,19 +10,20 @@ BattleScanner::BattleScanner()
 	movementTicks = std::vector<int>(MOTION_SCANNER_X * MOTION_SCANNER_Y, 0);
 }
 
-const UString &BattleScanner::getPrefix()
+template <> const UString &StateObject<BattleScanner>::getPrefix()
 {
 	static UString prefix = "BATTLESCANNER_";
 	return prefix;
 }
 
-const UString &BattleScanner::getTypeName()
+template <> const UString &StateObject<BattleScanner>::getTypeName()
 {
 	static UString name = "BattleScanner";
 	return name;
 }
 
-sp<BattleScanner> BattleScanner::get(const GameState &state, const UString &id)
+template <>
+sp<BattleScanner> StateObject<BattleScanner>::get(const GameState &state, const UString &id)
 {
 	auto it = state.current_battle->scanners.find(id);
 	if (it == state.current_battle->scanners.end())
@@ -118,4 +119,4 @@ void BattleScanner::notifyMovement(Vec3<int> position)
 	version++;
 	movementTicks[pos.y * MOTION_SCANNER_X + pos.x] = TICKS_SCANNER_REMAIN_LIT;
 }
-}
+} // namespace OpenApoc

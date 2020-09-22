@@ -13,9 +13,11 @@ namespace OpenApoc
 ScrollBar::ScrollBar(sp<Image> gripperImage)
     : Control(), capture(false), grippersize(1), segmentsize(1), gripperbutton(gripperImage),
       buttonerror(fw().data->loadSample("RAWSOUND:xcom3/rawsound/extra/textbeep.raw:22050")),
-      Value(0), BarOrientation(Orientation::Vertical), RenderStyle(ScrollBarRenderStyle::Menu),
-      GripperColour(220, 192, 192), Minimum(0), Maximum(10), LargeChange(2), LargePercent(10)
+      Value(0), BarOrientation(Orientation::Vertical), Minimum(0), Maximum(10),
+      RenderStyle(ScrollBarRenderStyle::Menu), GripperColour(220, 192, 192), LargeChange(2),
+      LargePercent(10)
 {
+	isClickable = true;
 	if (!gripperbutton)
 		gripperbutton = fw().data->loadImage(
 		    "PCK:xcom3/ufodata/newbut.pck:xcom3/ufodata/newbut.tab:4:ui/menuopt.pal");
@@ -91,10 +93,14 @@ void ScrollBar::eventOccured(Event *e)
 		switch (BarOrientation)
 		{
 			case Orientation::Vertical:
-				mousePosition = e->forms().MouseInfo.Y;
+				// MouseInfo.X/Y is relative to the control that raised it
+				// make it relative to this control instead
+				mousePosition = e->forms().MouseInfo.Y +
+				                e->forms().RaisedBy->getLocationOnScreen().y - resolvedLocation.y;
 				break;
 			case Orientation::Horizontal:
-				mousePosition = e->forms().MouseInfo.X;
+				mousePosition = e->forms().MouseInfo.X +
+				                e->forms().RaisedBy->getLocationOnScreen().x - resolvedLocation.x;
 				break;
 		}
 	}
@@ -123,15 +129,17 @@ void ScrollBar::eventOccured(Event *e)
 		capture = false;
 	}
 
-	if (e->type() == EVENT_FORM_INTERACTION && e->forms().RaisedBy == shared_from_this() &&
-	    e->forms().EventFlag == FormEventType::MouseMove && capture)
+	if (e->type() == EVENT_FORM_INTERACTION && e->forms().EventFlag == FormEventType::MouseMove &&
+	    capture)
 	{
-		this->setValue(static_cast<int>(mousePosition / segmentsize));
+		this->setValue(static_cast<int>(mousePosition / segmentsize) + Minimum);
 	}
 }
 
 void ScrollBar::onRender()
 {
+	Control::onRender();
+
 	// LoadResources();
 	if (Minimum == Maximum)
 		return;
@@ -237,6 +245,10 @@ void ScrollBar::configureSelfFromXml(pugi::xml_node *node)
 {
 	Control::configureSelfFromXml(node);
 
+	if (auto largeChange = node->attribute("largechange"))
+	{
+		this->LargeChange = largeChange.as_int();
+	}
 	auto gripperImageNode = node->child("gripperimage");
 	if (gripperImageNode)
 	{

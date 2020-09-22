@@ -3,14 +3,14 @@
 #include "framework/logger.h"
 #include "framework/palette.h"
 #include "framework/sound.h"
-#include "framework/trace.h"
 #include "framework/video.h"
 #include <cstring>
 #include <mutex>
 #include <queue>
 
 // libsmacker.h doesn't set C abi by default, so wrap
-extern "C" {
+extern "C"
+{
 #include "dependencies/libsmacker/smacker.h"
 }
 
@@ -79,7 +79,6 @@ class SMKVideo : public Video, public std::enable_shared_from_this<SMKVideo>
 
 	sp<FrameImage> popImage() override
 	{
-		TRACE_FN_ARGS1("Frame", Strings::fromInteger(this->current_frame_video));
 		std::lock_guard<std::recursive_mutex> l(this->frame_queue_lock);
 		if (this->image_queue.empty())
 		{
@@ -96,7 +95,6 @@ class SMKVideo : public Video, public std::enable_shared_from_this<SMKVideo>
 
 	sp<FrameAudio> popAudio() override
 	{
-		TRACE_FN_ARGS1("Frame", Strings::fromInteger(this->current_frame_audio));
 		std::lock_guard<std::recursive_mutex> l(this->frame_queue_lock);
 		if (this->audio_queue.empty())
 		{
@@ -113,7 +111,6 @@ class SMKVideo : public Video, public std::enable_shared_from_this<SMKVideo>
 
 	bool readNextFrame()
 	{
-		TRACE_FN;
 		std::lock_guard<std::recursive_mutex> l(this->frame_queue_lock);
 		if (this->stopped)
 			return false;
@@ -203,7 +200,6 @@ class SMKVideo : public Video, public std::enable_shared_from_this<SMKVideo>
 
 	bool load(IFile &file)
 	{
-		TRACE_FN;
 		double usf; // uSeconds per frame
 		this->video_data = file.readAll();
 		this->video_data_size = file.size();
@@ -364,7 +360,6 @@ const UString &SMKMusicTrack::getName() const { return this->video->file_path; }
 MusicTrack::MusicCallbackReturn SMKMusicTrack::fillData(unsigned int maxSamples, void *sampleBuffer,
                                                         unsigned int *returnedSamples)
 {
-	TRACE_FN;
 	if (!this->current_frame)
 	{
 		LogWarning("Playing beyond end of video");

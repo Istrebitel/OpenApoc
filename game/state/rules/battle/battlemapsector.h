@@ -21,20 +21,19 @@ enum class SpawnType
 	Civilian
 };
 
-class BattleMapSector : public StateObject
+class BattleMapSector : public StateObject<BattleMapSector>
 {
-	STATE_OBJECT(BattleMapSector)
   public:
-	BattleMapSector();
+	BattleMapSector() = default;
 	~BattleMapSector() override = default;
 
 	class LineOfSightBlock
 	{
 	  public:
 		// Inclusive lower boundary
-		Vec3<int> start;
+		Vec3<int> start = {0, 0, 0};
 		// Exclusive upper boundary
-		Vec3<int> end;
+		Vec3<int> end = {0, 0, 0};
 
 		int ai_patrol_priority = 0;
 		int ai_target_priority = 0;
@@ -52,7 +51,7 @@ class BattleMapSector : public StateObject
 		sp<LineOfSightBlock> clone(Vec3<int> shift);
 	};
 
-	Vec3<int> size;
+	Vec3<int> size = {0, 0, 0};
 	int occurrence_min = 0;
 	int occurrence_max = 0;
 
@@ -84,4 +83,4 @@ class BattleMapSectorTiles
 	// high level api for saving map sectors
 	bool saveSector(const UString &path, bool pack = true, bool pretty = false);
 };
-}
+} // namespace OpenApoc

@@ -56,7 +56,8 @@ sp<Control> MessageLogScreen::createMessageRow(EventMessage message, sp<GameStat
 	});
 }
 
-sp<Control> MessageLogScreen::createMessageRow(EventMessage message, sp<GameState> state,
+sp<Control> MessageLogScreen::createMessageRow(EventMessage message,
+                                               sp<GameState> state [[maybe_unused]],
                                                std::function<void(FormsEvent *e)> callback)
 {
 	auto control = mksp<Control>();
@@ -110,9 +111,10 @@ void MessageLogScreen::eventOccurred(Event *e)
 
 	if (e->type() == EVENT_KEY_DOWN)
 	{
-		if (e->keyboard().KeyCode == SDLK_ESCAPE)
+		if (e->keyboard().KeyCode == SDLK_ESCAPE || e->keyboard().KeyCode == SDLK_RETURN ||
+		    e->keyboard().KeyCode == SDLK_KP_ENTER)
 		{
-			fw().stageQueueCommand({StageCmd::Command::POP});
+			menuform->findControl("BUTTON_OK")->click();
 			return;
 		}
 	}

@@ -1,252 +1,134 @@
 #include "library/strings.h"
 #include "library/strings_format.h"
-#include <tuple> // used for std::ignore
-// Disable automatic #pragma linking for boost - only enabled in msvc and that should provide boost
-// symbols as part of the module that uses it
-#define BOOST_ALL_NO_LIB
 #include <boost/algorithm/string/predicate.hpp>
-#include <boost/locale/conversion.hpp>
 #include <boost/locale/encoding_utf.hpp>
 #include <boost/locale/message.hpp>
-
-#ifdef DUMP_TRANSLATION_STRINGS
-#include <fstream>
-#include <iostream>
-#include <map>
-#include <set>
-#endif
+#include <cctype>
 
 namespace OpenApoc
 {
 
-#ifdef DUMP_TRANSLATION_STRINGS
-
-static std::map<UString, std::set<UString>> trStrings;
-
-void dumpStrings()
-{
-	for (auto &p : trStrings)
-	{
-		UString outFileName = p.first + ".po";
-		std::ofstream outFile(outFileName.str());
-		outFile << "msgid \"\"\n"
-		        << "msgstr \"\"\n"
-		        << "\"Project-Id-Version: Apocalypse\\n\"\n"
-		        << "\"MIME-Version: 1.0\\n\"\n"
-		        << "\"Content-Type: text/plain; charset=UTF-8\\n\"\n"
-		        << "\"Content-Transfer-Encoding: 8bit\\n\"\n"
-		        << "\"Language: en\\n\""
-		        << "\"Plural-Forms: nplurals=2; plural=(n != 1);\\n\"\n\n";
-		for (auto &str : p.second)
-		{
-			auto escapedStr = str;
-			outFile << "msgid \"" << str << "\"\n";
-			outFile << "msgstr \"" << str << "\"\n\n";
-		}
-	}
-}
-
-#endif
-
 UString tr(const UString &str, const UString domain)
 {
-#ifdef DUMP_TRANSLATION_STRINGS
-	if (str != "")
+	return UString(boost::locale::translate(str).str(domain));
+}
+
+U32String to_u32string(const UStringView str)
+{
+	// FIXME: Boost api doesn't work with string views yet?
+	auto string_copy = UString(str);
+	return boost::locale::conv::utf_to_utf<char32_t>(string_copy);
+}
+
+UString to_ustring(const std::u32string_view str)
+{
+	auto string_copy = U32String(str);
+	return boost::locale::conv::utf_to_utf<char>(string_copy);
+}
+
+char32_t to_char32(const char c)
+{
+	// All the codepoints <=127 are the same as ascii
+	return static_cast<char32_t>(c);
+}
+
+UString to_upper(const UStringView str)
+{
+	/* Only change the case on ascii range characters (codepoint <=0x7f)
+	 * As we know the top bit is set for any bytes outside this range no matter the position in the
+	 * utf8 stream, we can cheat a bit here */
+	auto upper_string = UString(str);
+	for (size_t i = 0; i < upper_string.length(); i++)
 	{
-		trStrings[domain].insert(str);
+		if ((upper_string[i] & 0b10000000) == 0)
+			upper_string[i] = toupper(upper_string[i]);
 	}
-#endif
-	return UString(boost::locale::translate(str.str()).str(domain.str()));
+	return upper_string;
 }
 
-UString::~UString() = default;
-
-UString::UString() : u8Str() {}
-
-UString::UString(const std::string &str) : u8Str(str) {}
-
-UString::UString(std::string &&str) : u8Str(std::move(str)) {}
-
-UString::UString(const std::wstring &wstr) : u8Str(boost::locale::conv::utf_to_utf<char>(wstr)) {}
-
-UString::UString(const char *cstr)
-
+UString to_lower(const UStringView str)
 {
-	// We have to handle this manually as some things thought UString(nullptr) was a good idea
-	if (cstr)
+	/* Only change the case on ascii range characters (codepoint <=0x7f)
+	 * As we know the top bit is set for any bytes outside this range no matter the position in the
+	 * utf8 stream, we can cheat a bit here */
+	auto lower_string = UString(str);
+	for (size_t i = 0; i < lower_string.length(); i++)
 	{
-		this->u8Str = cstr;
+		if ((lower_string[i] & 0b10000000) == 0)
+			lower_string[i] = tolower(lower_string[i]);
 	}
+	return lower_string;
 }
 
-UString::UString(const wchar_t *wcstr)
-
+bool ends_with(const UStringView str, const UStringView ending)
 {
-	// We have to handle this manually as some things thought UString(nullptr) was a good idea
-	if (wcstr)
-	{
-		this->u8Str = boost::locale::conv::utf_to_utf<char>(wcstr);
-	}
+	return boost::ends_with(str, ending);
 }
 
-UString::UString(const UString &) = default;
-
-UString::UString(UString &&other) { this->u8Str = std::move(other.u8Str); }
-
-UString::UString(char c) : u8Str() { u8Str = boost::locale::conv::utf_to_utf<char>(&c, &c + 1); }
-
-UString::UString(wchar_t wc) : u8Str()
+UString remove(const UStringView str, size_t offset, size_t count)
 {
-	u8Str = boost::locale::conv::utf_to_utf<char>(&wc, &wc + 1);
+	auto u32str = to_u32string(str);
+
+	u32str.erase(offset, count);
+
+	return to_ustring(u32str);
 }
 
-UString::UString(UniChar uc) : u8Str()
+U32String remove(const U32StringView str, size_t offset, size_t count)
 {
-	u8Str = boost::locale::conv::utf_to_utf<char>(&uc, &uc + 1);
+	auto str_copy = U32String(str);
+	return str_copy.erase(offset, count);
 }
 
-const std::string &UString::str() const { return this->u8Str; }
-
-std::wstring UString::wstr() const { return boost::locale::conv::utf_to_utf<wchar_t>(this->u8Str); }
-
-const char *UString::cStr() const { return this->u8Str.c_str(); }
-
-size_t UString::cStrLength() const { return this->u8Str.length(); }
-
-bool UString::operator<(const UString &other) const { return (this->u8Str) < (other.u8Str); }
-
-bool UString::operator==(const UString &other) const { return (this->u8Str) == (other.u8Str); }
-
-UString UString::substr(size_t offset, size_t length) const
-{
-	return this->u8Str.substr(offset, length);
-}
-
-UString UString::toUpper() const { return boost::locale::to_upper(this->u8Str); }
-
-UString UString::toLower() const { return boost::locale::to_lower(this->u8Str); }
-
-UString &UString::operator=(const UString &other) = default;
-
-UString &UString::operator+=(const UString &other)
-{
-	this->u8Str += other.u8Str;
-	return *this;
-}
-
-size_t UString::length() const
-{
-	auto pointString = boost::locale::conv::utf_to_utf<UniChar>(this->u8Str);
-	return pointString.length();
-}
-
-void UString::insert(size_t offset, const UString &other)
-{
-	this->u8Str.insert(offset, other.u8Str);
-}
-
-void UString::remove(size_t offset, size_t count) { this->u8Str.erase(offset, count); }
-
-bool UString::operator!=(const UString &other) const { return this->u8Str != other.u8Str; }
-
-UString operator+(const UString &lhs, const UString &rhs)
-{
-	UString s;
-	s += lhs;
-	s += rhs;
-	return s;
-}
-
-std::ostream &operator<<(std::ostream &lhs, const UString &rhs)
-{
-	lhs << rhs.str();
-	return lhs;
-}
-
-std::vector<UString> UString::split(const UString &delims) const
+std::vector<UString> split(const UStringView str, const UStringView delims)
 {
 	// FIXME: Probably won't work if any of 'delims' is outside the ASCII range
 	std::vector<UString> strings;
 	size_t pos = 0;
 	size_t prev = pos;
-	while ((pos = this->u8Str.find_first_of(delims.str(), prev)) != std::string::npos)
+	while ((pos = str.find_first_of(delims, prev)) != std::string::npos)
 	{
 		if (pos > prev)
-			strings.push_back(this->u8Str.substr(prev, pos - prev));
+			strings.push_back(UString(str.substr(prev, pos - prev)));
 		prev = pos + 1;
 	}
-	strings.push_back(this->u8Str.substr(prev, pos));
+	strings.push_back(UString(str.substr(prev, pos)));
 	return strings;
 }
 
-std::list<UString> UString::splitlist(const UString &delims) const
+UString insert_codepoints(const UStringView str, size_t offset, const UStringView insert)
 {
-	std::vector<UString> strings = split(delims);
-	return std::list<UString>(strings.begin(), strings.end());
+	auto u32str = to_u32string(str);
+	auto u32insert = to_u32string(insert);
+	u32str.insert(offset, u32insert);
+	return to_ustring(u32str);
 }
 
-UniChar UString::u8Char(char c)
+int Strings::toInteger(const UStringView s)
 {
-	// FIXME: I believe all the <256 codepoints just map?
-	return c;
-}
-
-int UString::compare(const UString &other) const { return this->u8Str.compare(other.u8Str); }
-
-bool UString::endsWith(const UString &suffix) const
-{
-	return boost::ends_with(str(), suffix.str());
-}
-
-UString::ConstIterator UString::begin() const { return UString::ConstIterator(*this, 0); }
-
-UString::ConstIterator UString::end() const
-{
-	return UString::ConstIterator(*this, this->length());
-}
-
-UString::ConstIterator UString::ConstIterator::operator++()
-{
-	this->offset++;
-	return *this;
-}
-
-bool UString::ConstIterator::operator!=(const UString::ConstIterator &other) const
-{
-	return (this->offset != other.offset || this->s != other.s);
-}
-
-UniChar UString::ConstIterator::operator*() const
-{
-	auto pointString = boost::locale::conv::utf_to_utf<int>(this->s.str());
-	return pointString[this->offset];
-}
-
-int Strings::toInteger(const UString &s)
-{
-	std::string u8str = s.str();
+	auto u8str = UString(s);
 	return static_cast<int>(strtol(u8str.c_str(), NULL, 0));
 }
 
-float Strings::toFloat(const UString &s)
+float Strings::toFloat(const UStringView s)
 {
-	std::string u8str = s.str();
+	auto u8str = UString(s);
 	return static_cast<float>(strtod(u8str.c_str(), NULL));
 }
 
-uint8_t Strings::toU8(const UString &s) { return static_cast<uint8_t>(toInteger(s)); }
+uint8_t Strings::toU8(const UStringView s) { return static_cast<uint8_t>(toInteger(s)); }
 
-bool Strings::isInteger(const UString &s)
+bool Strings::isInteger(const UStringView s)
 {
-	std::string u8str = s.str();
+	auto u8str = UString(s);
 	char *endpos;
 	std::ignore = strtol(u8str.c_str(), &endpos, 0);
 	return (endpos != u8str.c_str());
 }
 
-bool Strings::isFloat(const UString &s)
+bool Strings::isFloat(const UStringView s)
 {
-	std::string u8str = s.str();
+	auto u8str = UString(s);
 	char *endpos;
 	std::ignore = strtod(u8str.c_str(), &endpos);
 	return (endpos != u8str.c_str());
@@ -256,7 +138,7 @@ UString Strings::fromInteger(int i) { return format("%d", i); }
 
 UString Strings::fromFloat(float f) { return format("%f", f); }
 
-bool Strings::isWhiteSpace(UniChar c)
+bool Strings::isWhiteSpace(char32_t c)
 {
 	// FIXME: Only works on ASCII whitespace
 	return isspace(c) != 0;

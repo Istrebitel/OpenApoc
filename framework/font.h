@@ -16,13 +16,14 @@ class BitmapFont
 	int spacewidth;
 	int fontheight;
 	int averagecharacterwidth;
-	std::map<UniChar, sp<PaletteImage>> fontbitmaps;
+	int kerning;
+	std::map<char32_t, sp<PaletteImage>> fontbitmaps;
 	UString name;
 	sp<Palette> palette;
 
   public:
 	virtual ~BitmapFont();
-	virtual sp<PaletteImage> getGlyph(UniChar codepoint);
+	virtual sp<PaletteImage> getGlyph(char32_t codepoint);
 	virtual sp<PaletteImage> getString(const UString &Text);
 	virtual int getFontWidth(const UString &Text);
 	virtual int getFontHeight() const;
@@ -33,8 +34,9 @@ class BitmapFont
 	std::list<UString> wordWrapText(const UString &Text, int MaxWidth);
 
 	/* Reads in set of "Character":"glyph description string" pairs */
-	static sp<BitmapFont> loadFont(const std::map<UniChar, UString> &charMap, int spaceWidth,
-	                               int fontHeight, UString fontName, sp<Palette> defaultPalette);
+	static sp<BitmapFont> loadFont(const std::map<char32_t, UString> &charMap, int spaceWidth,
+	                               int fontHeight, int kerning, UString fontName,
+	                               sp<Palette> defaultPalette);
 };
 
 }; // namespace OpenApoc

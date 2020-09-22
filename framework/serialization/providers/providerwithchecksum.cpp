@@ -2,30 +2,27 @@
 #include "framework/serialization/providers/providerwithchecksum.h"
 #include "framework/configfile.h"
 #include "framework/logger.h"
-#include "framework/trace.h"
+#include "framework/options.h"
 #include "library/strings.h"
 #include "library/strings_format.h"
 #include <sstream>
 
 #include "dependencies/pugixml/src/pugixml.hpp"
 
-// Disable automatic #pragma linking for boost - only enabled in msvc and that should provide boost
-// symbols as part of the module that uses it
-#define BOOST_ALL_NO_LIB
 #include <boost/crc.hpp>
+#include <boost/version.hpp>
+#if BOOST_VERSION >= 106600
+#include <boost/uuid/detail/sha1.hpp>
+#else
 #include <boost/uuid/sha1.hpp>
+#endif
 #include <boost/uuid/uuid.hpp>
 
 namespace OpenApoc
 {
-ConfigOptionBool useCRCChecksum("Framework.Serialization", "CRC",
-                                "use a CRC checksum when saving files", true);
-ConfigOptionBool useSHA1Checksum("Framework.Serialization", "SHA1",
-                                 "use a SHA1 checksum when saving files", false);
 
 static UString calculateSHA1Checksum(const std::string &str)
 {
-	TRACE_FN;
 	UString hashString;
 
 	boost::uuids::detail::sha1 sha;
@@ -40,7 +37,7 @@ static UString calculateSHA1Checksum(const std::string &str)
 			// FIXME: Probably need to do the reverse for big endian?
 			unsigned int byteHex = v & 0xff000000;
 			byteHex >>= 24;
-			hashString += format("%02x", byteHex).str();
+			hashString += format("%02x", byteHex);
 			v <<= 8;
 		}
 	}
@@ -49,7 +46,6 @@ static UString calculateSHA1Checksum(const std::string &str)
 }
 static UString calculateCRCChecksum(const std::string &str)
 {
-	TRACE_FN;
 	UString hashString;
 
 	boost::crc_32_type crc;
@@ -88,12 +84,12 @@ std::string ProviderWithChecksum::serializeManifest()
 	{
 		auto node = root.append_child();
 		node.set_name("file");
-		node.text().set(p.first.cStr());
+		node.text().set(p.first.c_str());
 		for (auto &csum : p.second)
 		{
 			auto checksumNode = node.append_child();
-			checksumNode.set_name(csum.first.cStr());
-			checksumNode.text().set(csum.second.cStr());
+			checksumNode.set_name(csum.first.c_str());
+			checksumNode.text().set(csum.second.c_str());
 		}
 	}
 	std::stringstream ss;
@@ -161,7 +157,7 @@ bool ProviderWithChecksum::openArchive(const UString &path, bool write)
 			LogInfo("Missing manifest file in \"%s\"", path);
 			return true;
 		}
-		parseManifest(result.str());
+		parseManifest(result);
 	}
 	return true;
 }
@@ -169,10 +165,10 @@ bool ProviderWithChecksum::readDocument(const UString &path, UString &result)
 {
 	if (inner->readDocument(path, result))
 	{
-		for (auto &csum : checksums[path.str()])
+		for (auto &csum : checksums[path])
 		{
 			auto expectedCSum = csum.second;
-			auto calculatedCSum = calculateChecksum(csum.first, result.str());
+			auto calculatedCSum = calculateChecksum(csum.first, result);
 			if (expectedCSum != calculatedCSum)
 			{
 				LogWarning("File \"%s\" has incorrect \"%s\" checksum \"%s\", expected \"%s\"",
@@ -198,11 +194,11 @@ bool ProviderWithChecksum::saveDocument(const UString &path, const UString &cont
 		{
 			LogWarning("Multiple document entries for path \"%s\"", path);
 		}
-		this->checksums[path.str()] = {};
-		if (useCRCChecksum.get())
-			this->checksums[path.str()]["CRC"] = calculateChecksum("CRC", contents.str()).str();
-		if (useSHA1Checksum.get())
-			this->checksums[path.str()]["SHA1"] = calculateChecksum("SHA1", contents.str()).str();
+		this->checksums[path] = {};
+		if (Options::useCRCChecksum.get())
+			this->checksums[path]["CRC"] = calculateChecksum("CRC", contents);
+		if (Options::useSHA1Checksum.get())
+			this->checksums[path]["SHA1"] = calculateChecksum("SHA1", contents);
 		return true;
 	}
 	return false;
@@ -213,4 +209,4 @@ bool ProviderWithChecksum::finalizeSave()
 	inner->saveDocument("checksum.xml", manifest);
 	return inner->finalizeSave();
 }
-}
+} // namespace OpenApoc

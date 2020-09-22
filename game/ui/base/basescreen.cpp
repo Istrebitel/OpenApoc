@@ -17,9 +17,11 @@
 #include "game/state/city/facility.h"
 #include "game/state/gamestate.h"
 #include "game/state/rules/city/ufopaedia.h"
+#include "game/ui/base/aliencontainmentscreen.h"
+#include "game/ui/base/buyandsellscreen.h"
 #include "game/ui/base/recruitscreen.h"
 #include "game/ui/base/researchscreen.h"
-#include "game/ui/base/transactionscreen.h"
+#include "game/ui/base/transferscreen.h"
 #include "game/ui/base/vequipscreen.h"
 #include "game/ui/components/basegraphics.h"
 #include "game/ui/general/aequipscreen.h"
@@ -45,7 +47,7 @@ void BaseScreen::changeBase(sp<Base> newBase)
 	BaseStage::changeBase(newBase);
 	form->findControlTyped<TextEdit>("TEXT_BASE_NAME")->setText(state->current_base->name);
 	form->findControlTyped<Graphic>("GRAPHIC_MINIMAP")
-	    ->setImage(BaseGraphics::drawMinimap(state, state->current_base->building));
+	    ->setImage(BaseGraphics::drawMinimap(state, *state->current_base->building));
 }
 
 void BaseScreen::begin()
@@ -93,14 +95,12 @@ void BaseScreen::begin()
 	                  [](Event *) { fw().stageQueueCommand({StageCmd::Command::POP}); });
 	form->findControlTyped<GraphicButton>("BUTTON_BASE_BUYSELL")
 	    ->addCallback(FormEventType::ButtonClick, [this](Event *) {
-		    fw().stageQueueCommand(
-		        {StageCmd::Command::PUSH,
-		         mksp<TransactionScreen>(state, TransactionScreen::Mode::BuySell)});
-		});
+		    fw().stageQueueCommand({StageCmd::Command::PUSH, mksp<BuyAndSellScreen>(state)});
+	    });
 	form->findControlTyped<GraphicButton>("BUTTON_BASE_HIREFIRESTAFF")
 	    ->addCallback(FormEventType::ButtonClick, [this](Event *) {
 		    fw().stageQueueCommand({StageCmd::Command::PUSH, mksp<RecruitScreen>(state)});
-		});
+	    });
 	form->findControlTyped<GraphicButton>("BUTTON_BASE_TRANSFER")
 	    ->addCallback(FormEventType::ButtonClick, [this](Event *) {
 		    if (this->state->player_bases.size() <= 1)
@@ -114,37 +114,39 @@ void BaseScreen::begin()
 		    }
 		    else
 		    {
-			    fw().stageQueueCommand(
-			        {StageCmd::Command::PUSH,
-			         mksp<TransactionScreen>(state, TransactionScreen::Mode::Transfer)});
+			    fw().stageQueueCommand({StageCmd::Command::PUSH, mksp<TransferScreen>(state)});
 		    }
-		});
+	    });
 	form->findControlTyped<GraphicButton>("BUTTON_BASE_ALIEN_CONTAINMENT")
 	    ->addCallback(FormEventType::ButtonClick, [this](Event *) {
-		    fw().stageQueueCommand(
-		        {StageCmd::Command::PUSH,
-		         mksp<TransactionScreen>(state, TransactionScreen::Mode::AlienContainment)});
-		});
+		    fw().stageQueueCommand({StageCmd::Command::PUSH, mksp<AlienContainmentScreen>(state)});
+	    });
 	form->findControlTyped<GraphicButton>("BUTTON_BASE_EQUIPAGENT")
 	    ->addCallback(FormEventType::ButtonClick, [this](Event *) {
 		    // FIXME: If you don't have any vehicles this button should do nothing
 		    fw().stageQueueCommand({StageCmd::Command::PUSH, mksp<AEquipScreen>(state)});
-		});
+	    });
 	form->findControlTyped<GraphicButton>("BUTTON_BASE_EQUIPVEHICLE")
 	    ->addCallback(FormEventType::ButtonClick, [this](Event *) {
 		    // FIXME: If you don't have any vehicles this button should do nothing
 		    fw().stageQueueCommand({StageCmd::Command::PUSH, mksp<VEquipScreen>(state)});
-		});
+	    });
 	form->findControlTyped<GraphicButton>("BUTTON_BASE_RES_AND_MANUF")
 	    ->addCallback(FormEventType::ButtonClick, [this](Event *) {
 		    // FIXME: If you don't have any facilities this button should do nothing
 		    fw().stageQueueCommand({StageCmd::Command::PUSH, mksp<ResearchScreen>(state)});
-		});
+	    });
+	// Base name edit
 	form->findControlTyped<TextEdit>("TEXT_BASE_NAME")
 	    ->addCallback(FormEventType::TextEditFinish, [this](FormsEvent *e) {
 		    this->state->current_base->name =
 		        std::dynamic_pointer_cast<TextEdit>(e->forms().RaisedBy)->getText();
-		});
+	    });
+	form->findControlTyped<TextEdit>("TEXT_BASE_NAME")
+	    ->addCallback(FormEventType::TextEditCancel, [this](FormsEvent *e) {
+		    std::dynamic_pointer_cast<TextEdit>(e->forms().RaisedBy)
+		        ->setText(this->state->current_base->name);
+	    });
 }
 
 void BaseScreen::pause() {}
@@ -159,9 +161,12 @@ void BaseScreen::eventOccurred(Event *e)
 
 	if (e->type() == EVENT_KEY_DOWN)
 	{
-		if (e->keyboard().KeyCode == SDLK_ESCAPE)
+		if (form->findControlTyped<TextEdit>("TEXT_BASE_NAME")->isFocused())
+			return;
+		if (e->keyboard().KeyCode == SDLK_ESCAPE || e->keyboard().KeyCode == SDLK_RETURN ||
+		    e->keyboard().KeyCode == SDLK_KP_ENTER)
 		{
-			fw().stageQueueCommand({StageCmd::Command::POP});
+			form->findControl("BUTTON_OK")->click();
 			return;
 		}
 		if (e->keyboard().KeyCode == SDLK_F10)
@@ -332,7 +337,7 @@ void BaseScreen::eventOccurred(Event *e)
 							                      MessageBox::ButtonOptions::Ok)});
 							break;
 						case Base::BuildError::Indestructible:
-							// Indestrictible facilities (IE the access lift) are just silently
+							// Indestructible facilities (IE the access lift) are just silently
 							// ignored
 							break;
 					}
@@ -357,7 +362,7 @@ void BaseScreen::eventOccurred(Event *e)
 								                      this->state->current_base->destroyFacility(
 								                          *this->state, this->selection);
 								                      this->refreshView();
-								                  })});
+							                      })});
 							break;
 						case Base::BuildError::Occupied:
 							fw().stageQueueCommand(
@@ -409,7 +414,7 @@ void BaseScreen::eventOccurred(Event *e)
 	}
 	else if (selection != NO_SELECTION)
 	{
-		int sprite = BaseGraphics::getCorridorSprite(state->current_base, selection);
+		int sprite = BaseGraphics::getCorridorSprite(*state->current_base, selection);
 		auto image = format(
 		    "PCK:xcom3/ufodata/base.pck:xcom3/ufodata/base.tab:%d:xcom3/ufodata/base.pcx", sprite);
 		if (sprite != 0)
@@ -438,9 +443,9 @@ bool BaseScreen::isTransition() { return false; }
 
 void BaseScreen::renderBase()
 {
-	const Vec2<int> BASE_POS = form->Location + baseView->Location;
+	const Vec2<int> BASE_POS = baseView->getLocationOnScreen();
 
-	BaseGraphics::renderBase(BASE_POS, state->current_base);
+	BaseGraphics::renderBase(BASE_POS, *state->current_base);
 
 	// Draw selection
 	if (selection != NO_SELECTION)
@@ -467,9 +472,8 @@ void BaseScreen::renderBase()
 		Vec2<int> pos;
 		if (selection == NO_SELECTION)
 		{
-			pos = mousePos -
-			      Vec2<int>{BaseGraphics::TILE_SIZE, BaseGraphics::TILE_SIZE} / 2 *
-			          dragFacility->size;
+			pos = mousePos - Vec2<int>{BaseGraphics::TILE_SIZE, BaseGraphics::TILE_SIZE} / 2 *
+			                     dragFacility->size;
 		}
 		else
 		{

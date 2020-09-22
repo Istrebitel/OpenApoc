@@ -33,9 +33,8 @@ class VehicleType;
 class UfopaediaEntry;
 class Image;
 
-class Organisation : public StateObject
+class Organisation : public StateObject<Organisation>
 {
-	STATE_OBJECT(Organisation)
   public:
 	enum class PurchaseResult
 	{
@@ -102,7 +101,9 @@ class Organisation : public StateObject
 	UString name;
 	int balance = 0;
 	int income = 0;
+	unsigned int rebuildingRate = 0;
 	int infiltrationValue = 0;
+	std::list<int> infiltrationHistory;
 	// Modified for all infiltration attempts at this org
 	int infiltrationSpeed = 0;
 	bool takenOver = false;
@@ -134,6 +135,7 @@ class Organisation : public StateObject
 	void updateInfiltration(GameState &state);
 	void updateTakeOver(GameState &state, unsigned int ticks);
 	void updateVehicleAgentPark(GameState &state);
+	void updateDailyInfiltrationHistory();
 
 	int getGuardCount(GameState &state) const;
 
@@ -154,6 +156,10 @@ class Organisation : public StateObject
 	Relation isRelatedTo(const StateRef<Organisation> &other) const;
 	bool isPositiveTo(const StateRef<Organisation> &other) const;
 	bool isNegativeTo(const StateRef<Organisation> &other) const;
+	// Calculate the cost of a bribe.
+	int costOfBribeBy(const StateRef<Organisation> &other) const;
+	// The organisation is bribed by other org.
+	bool bribedBy(GameState &state, StateRef<Organisation> other, int bribe);
 	float getRelationTo(const StateRef<Organisation> &other) const;
 	void adjustRelationTo(GameState &state, StateRef<Organisation> other, float value);
 	std::map<StateRef<Organisation>, float> current_relations;

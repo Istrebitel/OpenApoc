@@ -55,11 +55,16 @@ enum class TrainingAssignment
 	Psi
 };
 
-class Agent : public StateObject,
+enum class AgentStatus
+{
+	Alive,
+	Dead
+};
+
+class Agent : public StateObject<Agent>,
               public std::enable_shared_from_this<Agent>,
               public EquippableObject
 {
-	STATE_OBJECT(Agent)
   public:
 	Agent() = default;
 
@@ -70,15 +75,16 @@ class Agent : public StateObject,
 	// Appearance that this specific agent chose from available list of its type
 	int appearance = 0;
 	int portrait = 0;
-	AgentPortrait getPortrait() { return type->portraits[gender][portrait]; }
+	const AgentPortrait &getPortrait() const { return type->portraits.at(gender).at(portrait); }
 	AgentType::Gender gender = AgentType::Gender::Male;
 
-	AgentStats initial_stats;  // Stats at agent creatrion
+	AgentStats initial_stats;  // Stats at agent creation
 	AgentStats current_stats;  // Stats after agent training/improvement
 	AgentStats modified_stats; // Stats after 'temporary' modification (health damage, slowdown due
 	                           // to equipment weight, used stamina etc)
 	bool overEncumbred = false;
 	Rank rank = Rank::Rookie;
+	AgentStatus status = AgentStatus::Alive;
 
 	unsigned int teleportTicksAccumulated = 0;
 	bool canTeleport() const;
@@ -108,6 +114,8 @@ class Agent : public StateObject,
 	int getReactionValue() const;
 	int getTULimit(int reactionValue) const;
 	UString getRankName() const;
+	// Get relevant skill
+	int getSkill() const;
 
 	StateRef<Organisation> owner;
 
@@ -124,13 +132,14 @@ class Agent : public StateObject,
 	void enterBuilding(GameState &state, StateRef<Building> b);
 	/* 'enter' the agent in a vehicle from building*/
 	void enterVehicle(GameState &state, StateRef<Vehicle> v);
-	// Note that agent cannot ever leave vehicle into city, or enter vehicle from citu
+	// Note that agent cannot ever leave vehicle into city, or enter vehicle from city
 
 	// Agent's position in the city
-	Vec3<float> position;
+	Vec3<float> position = {0, 0, 0};
 	// Position agent is moving towards
-	Vec3<float> goalPosition;
+	Vec3<float> goalPosition = {0, 0, 0};
 
+	StateRef<Lab> lab_assigned = nullptr;
 	bool assigned_to_lab = false;
 
 	StateRef<BattleUnit> unit;
@@ -180,6 +189,9 @@ class Agent : public StateObject,
 
 	void die(GameState &state, bool silent = false);
 	bool isDead() const;
+
+	// for agents spawned specifically for the current battle, like turrets
+	bool destroyAfterBattle = false;
 
 	// Update agent in city
 	void update(GameState &state, unsigned ticks);

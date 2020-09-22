@@ -31,7 +31,7 @@ std::shared_future<void> loadBattleBuilding(sp<GameState> state, sp<Building> bu
                                             StateRef<Vehicle> playerVehicle)
 {
 	auto loadTask = fw().threadPoolEnqueue(
-	    [hotseat, building, state, raid, playerAgents, playerVehicle]() -> void {
+	    [hotseat, building, state, raid, playerAgents, playerVehicle]() mutable -> void {
 		    StateRef<Organisation> org = raid ? building->owner : state->getAliens();
 		    StateRef<Building> bld = {state.get(), building};
 
@@ -39,14 +39,12 @@ std::shared_future<void> loadBattleBuilding(sp<GameState> state, sp<Building> bu
 		    const int *guards = nullptr;
 		    const int *civilians = nullptr;
 
-		    // Won't work if I don't copy it!? Whatever
-		    auto agents = playerAgents;
-		    Battle::beginBattle(*state, hotseat, org, agents, aliens, guards, civilians,
+		    Battle::beginBattle(*state, hotseat, org, playerAgents, aliens, guards, civilians,
 		                        playerVehicle, bld);
-		});
+	    });
 	return loadTask;
 }
-}
+} // namespace
 BuildingScreen::BuildingScreen(sp<GameState> state, sp<Building> building)
     : Stage(), menuform(ui().getForm("city/building")), state(state), building(building)
 {
@@ -84,9 +82,10 @@ void BuildingScreen::eventOccurred(Event *e)
 
 	if (e->type() == EVENT_KEY_DOWN)
 	{
-		if (e->keyboard().KeyCode == SDLK_ESCAPE)
+		if (e->keyboard().KeyCode == SDLK_ESCAPE || e->keyboard().KeyCode == SDLK_RETURN ||
+		    e->keyboard().KeyCode == SDLK_KP_ENTER)
 		{
-			fw().stageQueueCommand({StageCmd::Command::POP});
+			menuform->findControl("BUTTON_QUIT")->click();
 			return;
 		}
 	}
@@ -101,6 +100,15 @@ void BuildingScreen::eventOccurred(Event *e)
 		if (e->forms().RaisedBy->Name == "BUTTON_EXTERMINATE" ||
 		    e->forms().RaisedBy->Name == "BUTTON_RAID")
 		{
+			if (!building->isAlive())
+			{
+				fw().stageQueueCommand(
+				    {StageCmd::Command::PUSH,
+				     mksp<MessageBox>(tr("No Entrance"), tr("Cannot raid as building destroyed"),
+				                      MessageBox::ButtonOptions::Ok)});
+				return;
+			}
+
 			if (building->accessTopic && !building->accessTopic->isComplete())
 			{
 				fw().stageQueueCommand(
@@ -112,25 +120,14 @@ void BuildingScreen::eventOccurred(Event *e)
 				                      MessageBox::ButtonOptions::Ok)});
 				return;
 			}
-			// FIXME: Implement selecting agents that will do the mission
-			LogWarning("Implement selecting agents that will do the mission");
-			std::list<StateRef<Agent>> agents;
+
+			std::list<StateRef<Agent>> agents(agentAssignment->getSelectedAgents());
 			StateRef<Vehicle> vehicle;
 			if (agentAssignment->currentVehicle)
 			{
 				vehicle = {state.get(), Vehicle::getId(*state, agentAssignment->currentVehicle)};
-				for (auto &a : agentAssignment->currentVehicle->currentAgents)
-				{
-					agents.push_back(a);
-				}
 			}
-			else
-			{
-				for (auto &a : agentAssignment->agents)
-				{
-					agents.emplace_back(state.get(), a);
-				}
-			}
+
 			if (agents.empty())
 			{
 				fw().stageQueueCommand(
@@ -203,10 +200,11 @@ void BuildingScreen::eventOccurred(Event *e)
 						bool hotseat = false;
 						fw().stageQueueCommand(
 						    {StageCmd::Command::REPLACEALL,
-						     mksp<BattleBriefing>(
-						         state, building->owner, Building::getId(*state, building),
-						         inBuilding, raid, loadBattleBuilding(state, building, hotseat,
-						                                              raid, agents, vehicle))});
+						     mksp<BattleBriefing>(state, building->owner,
+						                          Building::getId(*state, building), inBuilding,
+						                          raid,
+						                          loadBattleBuilding(state, building, hotseat, raid,
+						                                             agents, vehicle))});
 						return;
 					}
 				}
@@ -242,19 +240,22 @@ void BuildingScreen::eventOccurred(Event *e)
 		}
 		if (e->forms().RaisedBy->Name == "BUTTON_EQUIPAGENT")
 		{
-			fw().stageQueueCommand(
-			    {StageCmd::Command::PUSH,
-			     mksp<AEquipScreen>(this->state, agentAssignment->currentAgent)});
+			if (agentAssignment->currentAgent)
+			{
+				fw().stageQueueCommand(
+				    {StageCmd::Command::PUSH,
+				     mksp<AEquipScreen>(this->state, agentAssignment->currentAgent)});
+			}
 			return;
 		}
 		if (e->forms().RaisedBy->Name == "BUTTON_EQUIPVEHICLE")
 		{
-			auto equipScreen = mksp<VEquipScreen>(this->state);
 			if (agentAssignment->currentVehicle)
 			{
+				auto equipScreen = mksp<VEquipScreen>(this->state);
 				equipScreen->setSelectedVehicle(agentAssignment->currentVehicle);
+				fw().stageQueueCommand({StageCmd::Command::PUSH, equipScreen});
 			}
-			fw().stageQueueCommand({StageCmd::Command::PUSH, equipScreen});
 			return;
 		}
 	}
@@ -265,6 +266,7 @@ void BuildingScreen::update() { menuform->update(); }
 void BuildingScreen::render()
 {
 	fw().stageGetPrevious(this->shared_from_this())->render();
+	menuform->preRender();
 	menuform->render();
 }
 

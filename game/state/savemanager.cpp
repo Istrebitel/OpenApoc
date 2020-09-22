@@ -2,15 +2,12 @@
 #include "framework/configfile.h"
 #include "framework/filesystem.h"
 #include "framework/framework.h"
+#include "framework/options.h"
 #include "framework/serialization/serialize.h"
-#include "framework/trace.h"
 #include "game/state/gamestate.h"
+#include "version.h"
 #include <algorithm>
 #include <sstream>
-
-// Disable automatic #pragma linking for boost - only enabled in msvc and that should provide boost
-// symbols as part of the module that uses it
-#define BOOST_ALL_NO_LIB
 
 // boost uuid for generating temporary identifier for new save
 #include <boost/uuid/uuid_generators.hpp> // generators
@@ -23,11 +20,7 @@ namespace OpenApoc
 const UString saveManifestName = "save_manifest";
 const UString saveFileExtension = ".save";
 
-ConfigOptionString saveDirOption("Game.Save", "Directory", "Directory containing saved games",
-                                 "./saves");
-ConfigOptionBool packSaveOption("Game.Save", "Pack", "Pack saved games into a zip", true);
-
-SaveManager::SaveManager() : saveDirectory(saveDirOption.get()) {}
+SaveManager::SaveManager() : saveDirectory(Options::saveDirOption.get()) {}
 
 UString SaveManager::createSavePath(const UString &name) const
 {
@@ -80,7 +73,7 @@ std::shared_future<void> SaveManager::loadSpecialSave(const SaveType type,
 	{
 		saveName = saveTypeNames.at(type);
 	}
-	catch (std::out_of_range)
+	catch (std::out_of_range &)
 	{
 		LogError("Cannot find name of save type %i", static_cast<int>(type));
 		return std::async(std::launch::deferred, []() -> void { return; });
@@ -89,9 +82,9 @@ std::shared_future<void> SaveManager::loadSpecialSave(const SaveType type,
 	return loadGame(createSavePath(saveName), state);
 }
 
-bool writeArchiveWithBackup(const sp<SerializationArchive> archive, const UString &path, bool pack)
+bool writeArchiveWithBackup(SerializationArchive *archive, const UString &path, bool pack)
 {
-	fs::path savePath = path.str();
+	fs::path savePath = path;
 	fs::path tempPath;
 	bool shouldCleanup = false;
 	try
@@ -103,7 +96,7 @@ bool writeArchiveWithBackup(const sp<SerializationArchive> archive, const UStrin
 
 		// WARNING! Dragons live here! Specifically dragon named miniz who hates windows paths
 		// (or paths not starting with dot)
-		// therefore I'm doing gymnasitcs here to backup and still pass original path string to
+		// therefore I'm doing gymnastics here to backup and still pass original path string to
 		// archive write
 		// that is really bad, because if user clicks exit, save will be renamed to some random
 		// junk
@@ -149,7 +142,7 @@ bool writeArchiveWithBackup(const sp<SerializationArchive> archive, const UStrin
 			fs::rename(tempPath, savePath);
 		}
 	}
-	catch (fs::filesystem_error exception)
+	catch (fs::filesystem_error &exception)
 	{
 		if (shouldCleanup)
 		{
@@ -169,12 +162,12 @@ bool writeArchiveWithBackup(const sp<SerializationArchive> archive, const UStrin
 bool SaveManager::findFreePath(UString &path, const UString &name) const
 {
 	path = createSavePath("save_" + name);
-	if (fs::exists(path.str()))
+	if (fs::exists(path))
 	{
 		for (int retries = 5; retries > 0; retries--)
 		{
 			path = createSavePath("save_" + name + std::to_string(rand()));
-			if (!fs::exists(path.str()))
+			if (!fs::exists(path))
 			{
 				return true;
 			}
@@ -205,7 +198,7 @@ bool SaveManager::overrideGame(const SaveMetadata &metadata, const UString &newN
 	SaveMetadata updatedMetadata(newName, metadata.getFile(), time(nullptr), metadata.getType(),
 	                             gameState);
 	bool result = saveGame(updatedMetadata, gameState);
-	if (result && newName != metadata.getName().str())
+	if (result && newName != metadata.getName())
 	{
 		// if renamed file move to path with new name
 		UString newFile;
@@ -213,9 +206,9 @@ bool SaveManager::overrideGame(const SaveMetadata &metadata, const UString &newN
 		{
 			try
 			{
-				fs::rename(metadata.getFile().str(), newFile.str());
+				fs::rename(metadata.getFile(), newFile);
 			}
-			catch (fs::filesystem_error error)
+			catch (fs::filesystem_error &error)
 			{
 				LogWarning("Error while removing renamed save: \"%s\"", error.what());
 			}
@@ -227,13 +220,12 @@ bool SaveManager::overrideGame(const SaveMetadata &metadata, const UString &newN
 
 bool SaveManager::saveGame(const SaveMetadata &metadata, const sp<GameState> gameState) const
 {
-	bool pack = packSaveOption.get();
+	bool pack = Options::packSaveOption.get();
 	const UString path = metadata.getFile();
-	TRACE_FN_ARGS1("path", path);
 	auto archive = SerializationArchive::createArchive();
-	if (gameState->serialize(archive) && metadata.serializeManifest(archive))
+	if (gameState->serialize(archive.get()) && metadata.serializeManifest(archive.get()))
 	{
-		return writeArchiveWithBackup(archive, path, pack);
+		return writeArchiveWithBackup(archive.get(), path, pack);
 	}
 
 	return false;
@@ -252,7 +244,7 @@ bool SaveManager::specialSaveGame(SaveType type, const sp<GameState> gameState) 
 	{
 		saveName = saveTypeNames.at(type);
 	}
-	catch (std::out_of_range)
+	catch (std::out_of_range &)
 	{
 		LogError("Cannot find name of save type %i", static_cast<int>(type));
 		return false;
@@ -264,33 +256,31 @@ bool SaveManager::specialSaveGame(SaveType type, const sp<GameState> gameState) 
 
 std::vector<SaveMetadata> SaveManager::getSaveList() const
 {
-	auto dirString = saveDirOption.get();
-	fs::path saveDirectory = dirString.str();
+	auto dirString = Options::saveDirOption.get();
+	fs::path saveDirectory = dirString;
 	std::vector<SaveMetadata> saveList;
 	try
 	{
-		fs::path currentPath = fs::current_path().string();
 		if (!fs::exists(saveDirectory) && !fs::create_directories(saveDirectory))
 		{
 			LogWarning("Save directory \"%s\" not found, and could not be created!", saveDirectory);
 			return saveList;
 		}
 
-		for (auto i = fs::directory_iterator(currentPath / saveDirectory);
-		     i != fs::directory_iterator(); ++i)
+		for (auto i = fs::directory_iterator(saveDirectory); i != fs::directory_iterator(); ++i)
 		{
-			if (i->path().extension().string() != saveFileExtension.str())
+			if (i->path().extension().string() != saveFileExtension)
 			{
 				continue;
 			}
 
 			std::string saveFileName = i->path().filename().string();
-			// miniz can't read paths not starting with dor or with windows slashes
+			// miniz can't read paths not starting with dir or with windows slashes
 			UString savePath = saveDirectory.string() + "/" + saveFileName;
 			if (auto archive = SerializationArchive::readArchive(savePath))
 			{
 				SaveMetadata metadata;
-				if (metadata.deserializeManifest(archive, savePath))
+				if (metadata.deserializeManifest(archive.get(), savePath))
 				{
 					saveList.push_back(metadata);
 				}
@@ -302,7 +292,7 @@ std::vector<SaveMetadata> SaveManager::getSaveList() const
 			}
 		}
 	}
-	catch (fs::filesystem_error er)
+	catch (fs::filesystem_error &er)
 	{
 		LogError("Error while enumerating directory: \"%s\"", er.what());
 	}
@@ -318,26 +308,25 @@ bool SaveManager::deleteGame(const sp<SaveMetadata> &slot) const
 {
 	try
 	{
-		if (!fs::exists(slot->getFile().str()))
+		if (!fs::exists(slot->getFile()))
 		{
 			LogWarning("Attempt to delete not existing file");
 			return false;
 		}
 
-		fs::remove_all(slot->getFile().str());
+		fs::remove_all(slot->getFile());
 		return true;
 	}
-	catch (fs::filesystem_error exception)
+	catch (fs::filesystem_error &exception)
 	{
 		LogError("Unable to delete saved gane: \"%s\"", exception.what());
 		return false;
 	}
 }
 
-bool SaveMetadata::deserializeManifest(const sp<SerializationArchive> archive,
-                                       const UString &saveFileName)
+bool SaveMetadata::deserializeManifest(SerializationArchive *archive, const UString &saveFileName)
 {
-	auto root = archive->getRoot("", saveManifestName);
+	auto root = archive->getRoot("", saveManifestName.c_str());
 	if (!root)
 	{
 		return false;
@@ -359,7 +348,7 @@ bool SaveMetadata::deserializeManifest(const sp<SerializationArchive> archive,
 	auto saveDateNode = root->getNodeOpt("save_date");
 	if (saveDateNode)
 	{
-		std::istringstream stream(saveDateNode->getValue().str());
+		std::istringstream stream(saveDateNode->getValue());
 		time_t timestamp;
 		stream >> timestamp;
 		this->creationDate = timestamp;
@@ -385,9 +374,9 @@ bool SaveMetadata::deserializeManifest(const sp<SerializationArchive> archive,
 	return true;
 }
 
-bool SaveMetadata::serializeManifest(const sp<SerializationArchive> archive) const
+bool SaveMetadata::serializeManifest(SerializationArchive *archive) const
 {
-	auto root = archive->newRoot("", saveManifestName);
+	auto root = archive->newRoot("", saveManifestName.c_str());
 	if (!root)
 	{
 		return false;
@@ -403,6 +392,9 @@ bool SaveMetadata::serializeManifest(const sp<SerializationArchive> archive) con
 
 	auto gameTicksNode = root->addNode("game_ticks");
 	gameTicksNode->setValue(std::to_string(getGameTicks()));
+
+	auto versionNode = root->addNode("game_version");
+	versionNode->setValue(OPENAPOC_VERSION);
 
 	if (this->type != SaveType::Manual)
 	{
@@ -443,4 +435,4 @@ const UString &SaveMetadata::getFile() const { return file; }
 const UString &SaveMetadata::getDifficulty() const { return difficulty; }
 const SaveType &SaveMetadata::getType() const { return type; }
 uint64_t SaveMetadata::getGameTicks() const { return gameTicks; }
-}
+} // namespace OpenApoc

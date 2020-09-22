@@ -98,7 +98,7 @@
         <size width="150" height="2"/>
         <image/>
       </graphic>
-	   <graphic id="MANUFACTURE_BG">
+      <graphic id="MANUFACTURE_BG">
         <position x="247" y="241"/>
         <size width="224" height="18"/>
         <image>PCK:xcom3/ufodata/newbut.pck:xcom3/ufodata/newbut.tab:61:xcom3/ufodata/research.pcx</image>
@@ -136,9 +136,25 @@
         <alignment horizontal="centre" vertical="centre"/>
         <font>smalfont</font>
       </label>
-      <listbox id="LIST_LABS">
-        <position x="277" y="58"/>
-        <size height="100" width="264"/>
+      <scroll id="LIST_SMALL_LABS_SCROLL">
+        <position x="278" y="58"/>
+        <size height="16" width="262"/>
+      </scroll>
+      <scroll id="LIST_LARGE_LABS_SCROLL">
+        <position x="272" y="98"/>
+        <size height="16" width="274"/>
+      </scroll>
+      <listbox id="LIST_SMALL_LABS" scrollbarid="LIST_SMALL_LABS_SCROLL">
+        <position x="278" y="58"/>
+        <size height="35" width="262"/>
+        <item size="0" spacing="6"/>
+        <orientation>horizontal</orientation>
+        <hovercolour r="255" g="255" b="255" a="255"/>
+        <selcolour r="255" g="0" b="0" a="255"/>
+      </listbox>
+      <listbox id="LIST_LARGE_LABS" scrollbarid="LIST_LARGE_LABS_SCROLL">
+        <position x="272" y="98"/>
+        <size height="70" width="274"/>
         <item size="0" spacing="6"/>
         <orientation>horizontal</orientation>
         <hovercolour r="255" g="255" b="255" a="255"/>
@@ -146,21 +162,24 @@
       </listbox>
       <listbox id="LIST_ASSIGNED">
         <position x="248" y="285"/>
-        <size height="160" width="320"/>
+        <size height="160" width="322"/>
         <orientation list="vertical" scroll="horizontal"/>
         <hovercolour r="255" g="255" b="255" a="255"/>
+        <autoselect>no</autoselect>
       </listbox>
       <scroll id="LIST_UNASSIGNED_SCROLL">
         <position x="164" y="192"/>
         <size width="15" height="254"/>
       </scroll>
       <graphicbutton id="LIST_UNASSIGNED_SCROLL_UP" scrollprev="LIST_UNASSIGNED_SCROLL">
+        <tooltip text="Scroll Up" font="smallset"/>
         <position x="161" y="168"/>
         <size width="22" height="21"/>
         <image/>
         <imagedepressed>BUTTON_SCROLL_UP_DEPRESSED</imagedepressed>
       </graphicbutton>
       <graphicbutton id="LIST_UNASSIGNED_SCROLL_DOWN" scrollnext="LIST_UNASSIGNED_SCROLL">
+        <tooltip text="Scroll Down" font="smallset"/>
         <position x="161" y="449"/>
         <size width="22" height="21"/>
         <image/>
@@ -171,6 +190,7 @@
         <size height="256" width="128"/>
         <orientation>vertical</orientation>
         <hovercolour r="255" g="255" b="255" a="255"/>
+        <autoselect>no</autoselect>
       </listbox>
       <graphic id="MAGIC_ARROW">
         <image>PCK:xcom3/ufodata/newbut.pck:xcom3/ufodata/newbut.tab:60:xcom3/ufodata/research.pcx</image>
@@ -178,12 +198,14 @@
         <size width="43" height="31"/>
       </graphic>
       <graphicbutton id="BUTTON_RESEARCH_NEWPROJECT">
+        <tooltip text="Assign project" font="smallset"/>
         <position x="602" y="40"/>
         <size width="35" height="34"/>
         <image/>
         <imagedepressed>PCK:xcom3/ufodata/newbut.pck:xcom3/ufodata/newbut.tab:58:xcom3/ufodata/research.pcx</imagedepressed>
       </graphicbutton>
       <graphicbutton id="BUTTON_RESEARCH_CANCELPROJECT">
+        <tooltip text="Stop project" font="smallset"/>
         <position x="602" y="80"/>
         <size width="35" height="34"/>
         <image/>

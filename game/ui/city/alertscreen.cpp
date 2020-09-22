@@ -6,6 +6,7 @@
 #include "framework/event.h"
 #include "framework/framework.h"
 #include "framework/keycodes.h"
+#include "game/state/city/agentmission.h"
 #include "game/state/city/building.h"
 #include "game/state/city/vehicle.h"
 #include "game/state/city/vehiclemission.h"
@@ -56,9 +57,10 @@ void AlertScreen::eventOccurred(Event *e)
 
 	if (e->type() == EVENT_KEY_DOWN)
 	{
-		if (e->keyboard().KeyCode == SDLK_ESCAPE)
+		if (e->keyboard().KeyCode == SDLK_ESCAPE || e->keyboard().KeyCode == SDLK_RETURN ||
+		    e->keyboard().KeyCode == SDLK_KP_ENTER)
 		{
-			fw().stageQueueCommand({StageCmd::Command::POP});
+			menuform->findControl("BUTTON_QUIT")->click();
 			return;
 		}
 	}
@@ -67,45 +69,61 @@ void AlertScreen::eventOccurred(Event *e)
 	{
 		if (e->forms().RaisedBy->Name == "BUTTON_EXTERMINATE")
 		{
-			// FIXME: Implement selecting agents that will do the mission
-			if (agentAssignment->currentVehicle)
+			if (agentAssignment->getSelectedAgents().empty())
 			{
-				StateRef<Vehicle> vehicle = {
-				    state.get(), Vehicle::getId(*state, agentAssignment->currentVehicle)};
-				// FIXME: Implement sending vehicle to exterminate
-				LogWarning("Implement sending vehicle %s to exterminate", vehicle.id);
-				agentAssignment->currentVehicle->setMission(
-				    *state, VehicleMission::gotoBuilding(*state, *agentAssignment->currentVehicle,
-				                                         {state.get(), building}));
-				fw().stageQueueCommand({StageCmd::Command::POP});
-			}
-			else
-			{
-				// FIXME: Implement sending agents to exterminate
 				fw().stageQueueCommand(
 				    {StageCmd::Command::PUSH,
 				     mksp<MessageBox>(tr("No Agents Selected"),
-				                      tr("You need to select the agents you want to become active "
-				                         "within the building."),
+				                      tr("You need to select the agents you want to "
+				                         "become active within the building."),
 				                      MessageBox::ButtonOptions::Ok)});
+				return;
 			}
+
+			// reset the investigator counter as it may be non-zero because of a previous
+			// investigation
+			building->pendingInvestigatorCount = 0;
+
+			// send a vehicle fleet
+			for (auto &vehicle : agentAssignment->getSelectedVehicles())
+			{
+				++building->pendingInvestigatorCount;
+				vehicle->setMission(*state, VehicleMission::investigateBuilding(
+				                                *state, *vehicle, {state.get(), building}));
+			}
+
+			// send agents on foot
+			for (auto &agent : agentAssignment->getSelectedAgents())
+			{
+				if (!agent->currentVehicle)
+				{
+					++building->pendingInvestigatorCount;
+					agent->setMission(*state, AgentMission::investigateBuilding(
+					                              *state, *agent, {state.get(), building}));
+				}
+			}
+
+			fw().stageQueueCommand({StageCmd::Command::POP});
 			return;
 		}
 		if (e->forms().RaisedBy->Name == "BUTTON_EQUIPAGENT")
 		{
-			fw().stageQueueCommand(
-			    {StageCmd::Command::PUSH,
-			     mksp<AEquipScreen>(this->state, agentAssignment->currentAgent)});
+			if (agentAssignment->currentAgent)
+			{
+				fw().stageQueueCommand(
+				    {StageCmd::Command::PUSH,
+				     mksp<AEquipScreen>(this->state, agentAssignment->currentAgent)});
+			}
 			return;
 		}
 		if (e->forms().RaisedBy->Name == "BUTTON_EQUIPVEHICLE")
 		{
-			auto equipScreen = mksp<VEquipScreen>(this->state);
 			if (agentAssignment->currentVehicle)
 			{
+				auto equipScreen = mksp<VEquipScreen>(this->state);
 				equipScreen->setSelectedVehicle(agentAssignment->currentVehicle);
+				fw().stageQueueCommand({StageCmd::Command::PUSH, equipScreen});
 			}
-			fw().stageQueueCommand({StageCmd::Command::PUSH, equipScreen});
 			return;
 		}
 		if (e->forms().RaisedBy->Name == "BUTTON_QUIT")
@@ -121,6 +139,7 @@ void AlertScreen::update() { menuform->update(); }
 void AlertScreen::render()
 {
 	fw().stageGetPrevious(this->shared_from_this())->render();
+	menuform->preRender();
 	menuform->render();
 }
 

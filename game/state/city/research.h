@@ -44,9 +44,8 @@ class ProjectDependencies
 	bool satisfied(StateRef<Base> base) const;
 };
 
-class ResearchTopic : public StateObject
+class ResearchTopic : public StateObject<ResearchTopic>
 {
-	STATE_OBJECT(ResearchTopic)
   public:
 	ResearchTopic() = default;
 	enum class Type
@@ -111,11 +110,11 @@ class ResearchDependency
 	bool satisfied() const;
 };
 
-class Lab : public StateObject
+class Lab : public StateObject<Lab>
 {
-	STATE_OBJECT(Lab)
   public:
 	Lab() = default;
+	~Lab() override;
 	ResearchTopic::LabSize size = ResearchTopic::LabSize::Small;
 	ResearchTopic::Type type = ResearchTopic::Type::BioChem;
 	StateRef<ResearchTopic> current_project;
@@ -128,6 +127,7 @@ class Lab : public StateObject
 
 	int getTotalSkill() const;
 	unsigned getQuantity() const;
+	static void removeAgent(StateRef<Lab> lab, StateRef<Agent> &agent);
 
 	// We keep a count of ticks since the last point of progress to accurately accumulate over
 	// periods of ticks smaller than what is required to progress a single 'progress' point.
@@ -158,6 +158,16 @@ class ResearchState
 	void updateTopicList();
 	void resortTopicList();
 	StateRefMap<Lab> labs;
+
+	// Is the research of the item finished?
+	template <class T> bool isComplete(StateRef<T> item) const
+	{
+		size_t prefLen = item->getPrefix().length();
+		UString researchId(ResearchTopic::getPrefix() + item->id.substr(prefLen));
+
+		auto it = topics.find(researchId);
+		return it == topics.end() ? true : it->second->isComplete();
+	}
 };
 
 } // namespace OpenApoc

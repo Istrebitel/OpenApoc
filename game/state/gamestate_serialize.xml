@@ -49,6 +49,9 @@
 		<member>rng</member>
 		<member>gameTime</member>
 		<member>gameTimeBeforeBattle</member>
+		<member>missionLocationBattle</member>
+		<member>eventFromBattleText</member>
+		<member>eventFromBattle</member>
 		<member type="SectionMap">battle_maps</member>
 		<member type="Section">current_battle</member>
 		<member type="Section">hazard_types</member>
@@ -59,6 +62,7 @@
 		<member type="Section">equipment_sets_by_level</member>
 		<member type="Section">building_functions</member>
 		<member>messages</member>
+		<member>baseIndex</member>
 		<member>difficulty</member>
 		<member>firstDetection</member>
 		<member>nextInvasion</member>
@@ -165,6 +169,7 @@
 		<name>AEquipment</name>
 		<member>type</member>
 		<member>payloadType</member>
+		<member>lastLoadedAmmoType</member>
 		<member>equippedPosition</member>
 		<member>equippedSlotType</member>
 		<member>ownerAgent</member>
@@ -197,7 +202,7 @@
 		<name>EquipmentTemplate</name>
 		<member>equipment</member>
 	</object>
-		<object>
+	<object>
 		<name>EquipmentTemplate::EquipmentTemplateEntry</name>
 		<member>pos</member>
 		<member>type</member>
@@ -214,7 +219,7 @@
 		<member>grenade</member>
 		<member>grenade_amount</member>
 	</object>
-		<object>
+	<object>
 		<name>EquipmentSet::EquipmentData</name>
 		<member>equipment</member>
 	</object>
@@ -244,12 +249,14 @@
 		<member>currentVehicle</member>
 		<member>position</member>
 		<member>goalPosition</member>
+		<member>lab_assigned</member>
 		<member>assigned_to_lab</member>
 		<member>unit</member>
 		<member>isBrainsucker</member>
 		<member>missions</member>
 		<member>teleportTicksAccumulated</member>
 		<member>equipment</member>
+		<member>destroyAfterBattle</member>
 	</object>
 	<object>
 		<name>AgentPortrait</name>
@@ -314,6 +321,87 @@
 		<member>entries</member>
 	</object>
 	<enum>
+		<name>GameEventType</name>
+		<value>UfoSpotted</value>
+		<value>UfoCrashed</value>
+		<value>UfoRecoveryUnmanned</value>
+		<value>VehicleLightDamage</value>
+		<value>VehicleModerateDamage</value>
+		<value>VehicleHeavyDamage</value>
+		<value>VehicleEscaping</value>
+		<value>VehicleNoAmmo</value>
+		<value>VehicleLowFuel</value>
+		<value>VehicleNoFuel</value>
+		<value>VehicleRepaired</value>
+		<value>VehicleRearmed</value>
+		<value>VehicleRefuelled</value>
+		<value>VehicleNoEngine</value>
+		<value>VehicleRecovered</value>
+		<value>UnauthorizedVehicle</value>
+		<value>NotEnoughAmmo</value>
+		<value>NotEnoughFuel</value>
+		<value>UfoRecoveryBegin</value>
+		<value>DefendTheBase</value>
+		<value>AgentRearmed</value>
+		<value>CargoArrived</value>
+		<value>TransferArrived</value>
+		<value>RecoveryArrived</value>
+		<value>CargoExpired</value>
+		<value>CargoSeized</value>
+		<value>MissionCompletedBase</value>
+		<value>BaseDestroyed</value>
+		<value>AgentDiedCity</value>
+		<value>VehicleDestroyed</value>
+		<value>AlienSpotted</value>
+		<value>CommenceInvestigation</value>
+		<value>BuildingAttacked</value>
+		<value>CargoExpiresSoon</value>
+		<value>MissionCompletedBuildingRaid</value>
+		<value>MissionCompletedBuildingNormal</value>
+		<value>AlienTakeover</value>
+		<value>OrganizationAttack</value>
+		<value>OrganizationRaid</value>
+		<value>OrganizationTreaty</value>
+		<value>OrganizationBribe</value>
+		<value>AgentArrived</value>
+		<value>AgentUnableToReach</value>
+		<value>HostileSpotted</value>
+		<value>AgentBrainsucked</value>
+		<value>AgentDiedBattle</value>
+		<value>HostileDied</value>
+		<value>UnknownDied</value>
+		<value>AgentCriticallyWounded</value>
+		<value>AgentBadlyInjured</value>
+		<value>AgentInjured</value>
+		<value>AgentUnderFire</value>
+		<value>AgentUnconscious</value>
+		<value>AgentLeftCombat</value>
+		<value>AgentFrozen</value>
+		<value>AgentBerserk</value>
+		<value>AgentPanicked</value>
+		<value>AgentPanicOver</value>
+		<value>AgentPsiAttacked</value>
+		<value>AgentPsiProbed</value>
+		<value>AgentPsiControlled</value>
+		<value>AgentPsiOver</value>
+		<value>NoLOF</value>
+		<value>NewTurn</value>
+		<value>ResearchCompleted</value>
+		<value>ManufactureCompleted</value>
+		<value>ManufactureHalted</value>
+		<value>FacilityCompleted</value>
+		<value>ZoomView</value>
+		<value>MarketUpdate</value>
+		<value>WeeklyReport</value>
+		<value>EnterAlienDimension</value>
+		<value>LeaveAlienDimension</value>
+		<value>MissionStarted</value>
+		<value>BuildingDisabled</value>
+		<value>MissionCompletedVehicle</value>
+		<value>MissionCompletedBuildingAlien</value>
+		<value>None</value>
+	</enum>
+	<enum>
 		<name>Cargo::Type</name>
 		<value>Agent</value>
 		<value>Bio</value>
@@ -373,6 +461,7 @@
 		<member>cargo</member>
 		<member>carriedVehicle</member>
 		<member>carriedByVehicle</member>
+		<member>betweenDimensions</member>
 	</object>
 	<object>
 		<name>VEquipment</name>
@@ -872,6 +961,7 @@
 		<member>initial_portals</member>
 		<member>tileToRoadSegmentMap</member>
 		<member>roadSegments</member>
+		<member>civilianSalary</member>
 		<member>researchUnlock</member>
 		<member>cityViewScreenCenter</member>
 		<member>cityViewPageIndex</member>
@@ -957,6 +1047,12 @@
 	<object>
 		<name>BuildingFunction</name>
 		<member>name</member>
+		<member>baseCost</member>
+		<member>baseIncome</member>
+		<member>workersPerTile</member>
+		<member>agentSpawnType</member>
+		<member>investmentValue</member>
+		<member>prestige</member>
 		<member>infiltrationSpeed</member>
 		<member>detectionWeight</member>
 		<member>ufopaedia_entry</member>
@@ -977,6 +1073,15 @@
 		<member>currentVehicles</member>
 		<member>currentAgents</member>
 		<member>cargo</member>
+		<member>isPurchesable</member>
+		<member>purchasePrice</member>
+		<member>maintenanceCosts</member>
+		<member>maximumWorkforce</member>
+		<member>currentWorkforce</member>
+		<member>incomePerCapita</member>
+		<member>currentWage</member>
+		<member>investment</member>
+		<member>prestige</member>
 		<member>ticksDetectionTimeOut</member>
 		<member>ticksDetectionAttemptAccumulated</member>
 		<member>detected</member>
@@ -984,6 +1089,7 @@
 		<member>researchUnlock</member>
 		<member>accessTopic</member>
 		<member>victory</member>
+		<member>pendingInvestigatorCount</member>
 	</object>
 	<object>
 		<name>UFOIncursion</name>
@@ -1031,6 +1137,7 @@
 		<member>height</member>
 		<member>overlayHeight</member>
 		<member>basement</member>
+		<member>isBuildingPart</member>
 		<member>commonProperty</member>
 		<member>isHill</member>
 	</object>
@@ -1238,7 +1345,9 @@
 		<member>name</member>
 		<member>balance</member>
 		<member>income</member>
+		<member>rebuildingRate</member>
 		<member>infiltrationValue</member>
+		<member>infiltrationHistory</member>
 		<member>infiltrationSpeed</member>
 		<member>takenOver</member>
 		<member>ticksTakeOverAttemptAccumulated</member>
@@ -1337,7 +1446,7 @@
 		<member>targetBodyState</member>
 	</object>
 	<object>
-	<name>BattleUnitAnimationPack::AltFireAnimationKey</name>
+		<name>BattleUnitAnimationPack::AltFireAnimationKey</name>
 		<member>itemWieldMode</member>
 		<member>handState</member>
 		<member>angle</member>
@@ -1439,6 +1548,7 @@
 		<value>RecoverVehicle</value>
 		<value>AttackVehicle</value>
 		<value>AttackBuilding</value>
+		<value>RestartNextMission</value>
 		<value>Snooze</value>
 		<value>TakeOff</value>
 		<value>Land</value>
@@ -1450,6 +1560,8 @@
 		<value>Teleport</value>
 		<value>SelfDestruct</value>
 		<value>DepartToSpace</value>
+		<value>ArriveFromDimensionGate</value>
+		<value>InvestigateBuilding</value>
 	</enum>
 	<enum>
 		<name>AgentMission::MissionType</name>
@@ -1948,3 +2060,4 @@
 		<member>cityDamage</member>
 	</object>
 </openapoc_gamestate>
+

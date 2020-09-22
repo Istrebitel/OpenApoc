@@ -2,6 +2,7 @@
 #include "forms/graphic.h"
 #include "forms/graphicbutton.h"
 #include "forms/label.h"
+#include "forms/multilistbox.h"
 #include "forms/scrollbar.h"
 #include "forms/ui.h"
 #include "framework/configfile.h"
@@ -11,12 +12,15 @@
 #include "framework/logger.h"
 #include "game/state/battle/battle.h"
 #include "game/state/battle/battleunit.h"
+#include "game/state/city/base.h"
 #include "game/state/city/building.h"
 #include "game/state/city/city.h"
+#include "game/state/city/facility.h"
 #include "game/state/city/vehicle.h"
 #include "game/state/city/vequipment.h"
 #include "game/state/gamestate.h"
 #include "game/state/rules/aequipmenttype.h"
+#include "game/state/rules/city/facilitytype.h"
 #include "game/state/rules/city/vammotype.h"
 #include "game/state/rules/city/vehicletype.h"
 #include "game/state/rules/city/vequipmenttype.h"
@@ -26,7 +30,12 @@ namespace OpenApoc
 {
 ControlGenerator ControlGenerator::singleton;
 
-void ControlGenerator::init(GameState &state)
+const UString ControlGenerator::VEHICLE_ICON_NAME("ICON_V");
+const UString ControlGenerator::AGENT_ICON_NAME("ICON_A");
+const UString ControlGenerator::LEFT_LIST_NAME("LEFT");
+const UString ControlGenerator::RIGHT_LIST_NAME("RIGHT");
+
+void ControlGenerator::init(GameState &state [[maybe_unused]])
 {
 	for (int i = 0; i < 3; i++)
 	{
@@ -77,7 +86,7 @@ void ControlGenerator::init(GameState &state)
 	for (int i = 47; i <= 50; i++)
 	{
 		icons.push_back(fw().data->loadImage(format(
-		    "PCK:xcom3/ufodata/vs_icon.pck:xcom3/ufodata/vs_icon.tab:%s:xcom3/ufodata/pal_01.dat",
+		    "PCK:xcom3/ufodata/vs_icon.pck:xcom3/ufodata/vs_icon.tab:%d:xcom3/ufodata/pal_01.dat",
 		    i)));
 	}
 
@@ -85,12 +94,22 @@ void ControlGenerator::init(GameState &state)
 	for (int i = 51; i <= 63; i++)
 	{
 		vehiclePassengerCountIcons.push_back(fw().data->loadImage(format(
-		    "PCK:xcom3/ufodata/vs_icon.pck:xcom3/ufodata/vs_icon.tab:%s:xcom3/ufodata/pal_01.dat",
+		    "PCK:xcom3/ufodata/vs_icon.pck:xcom3/ufodata/vs_icon.tab:%d:xcom3/ufodata/pal_01.dat",
 		    i)));
 	}
 	labelFont = ui().getFont("smalfont");
 
 	initialised = true;
+}
+
+sp<Control> ControlGenerator::createVehicleIcon(GameState &state, sp<Vehicle> vehicle)
+{
+	auto info = createVehicleInfo(state, vehicle);
+	auto icon = createVehicleControl(state, info);
+	icon->Name = VEHICLE_ICON_NAME;
+	icon->setData(mksp<int>(info.passengers));
+
+	return icon;
 }
 
 VehicleTileInfo ControlGenerator::createVehicleInfo(GameState &state, sp<Vehicle> v)
@@ -164,9 +183,17 @@ sp<Control> ControlGenerator::createVehicleControl(GameState &state, const Vehic
 	baseControl->Size.x -= 1;
 	baseControl->Name = "OWNED_VEHICLE_FRAME_" + info.vehicle->name;
 	baseControl->setData(info.vehicle);
+	baseControl->ToolTipText = info.vehicle->name;
 
 	auto vehicleIcon = baseControl->createChild<Graphic>(info.vehicle->type->icon);
-	vehicleIcon->AutoSize = true;
+	if (vehicleIcon->getImage())
+	{
+		vehicleIcon->Size = vehicleIcon->getImage()->size;
+	}
+	else
+	{
+		vehicleIcon->AutoSize = true;
+	}
 	vehicleIcon->Location = {1, 1};
 	vehicleIcon->Name = "OWNED_VEHICLE_ICON_" + info.vehicle->name;
 
@@ -189,21 +216,42 @@ sp<Control> ControlGenerator::createVehicleControl(GameState &state, const Vehic
 	sp<Graphic> stateGraphic;
 
 	stateGraphic = baseControl->createChild<Graphic>(singleton.icons[(int)info.state]);
-	stateGraphic->AutoSize = true;
+	if (stateGraphic->getImage())
+	{
+		stateGraphic->Size = stateGraphic->getImage()->size;
+	}
+	else
+	{
+		stateGraphic->AutoSize = true;
+	}
 	stateGraphic->Location = {0, 0};
 	stateGraphic->Name = "OWNED_VEHICLE_STATE_" + info.vehicle->name;
 
 	if (info.faded)
 	{
 		auto fadeIcon = baseControl->createChild<Graphic>(singleton.iconShade);
-		fadeIcon->AutoSize = true;
+		if (fadeIcon->getImage())
+		{
+			fadeIcon->Size = fadeIcon->getImage()->size;
+		}
+		else
+		{
+			fadeIcon->AutoSize = true;
+		}
 		fadeIcon->Location = {1, 1};
 	}
 	if (info.passengers)
 	{
 		auto passengerGraphic = vehicleIcon->createChild<Graphic>(
 		    singleton.vehiclePassengerCountIcons[info.passengers]);
-		passengerGraphic->AutoSize = true;
+		if (passengerGraphic->getImage())
+		{
+			passengerGraphic->Size = passengerGraphic->getImage()->size;
+		}
+		else
+		{
+			passengerGraphic->AutoSize = true;
+		}
 		passengerGraphic->Location = {0, 0};
 		passengerGraphic->Name = "OWNED_VEHICLE_PASSENGERS_" + info.vehicle->name;
 	}
@@ -215,6 +263,102 @@ sp<Control> ControlGenerator::createVehicleControl(GameState &state, sp<Vehicle>
 {
 	auto info = createVehicleInfo(state, v);
 	return createVehicleControl(state, info);
+}
+
+sp<Control> ControlGenerator::createVehicleAssignmentControl(GameState &state, sp<Vehicle> vehicle)
+{
+	const int controlLength = 200, controlHeight = 24, iconLenght = 36;
+
+	auto control = mksp<Control>();
+	control->Size = control->SelectionSize = {controlLength, controlHeight};
+	control->setData(vehicle);
+
+	auto icon = createVehicleIcon(state, vehicle);
+	icon->Size = {iconLenght, controlHeight};
+	icon->setParent(control);
+
+	auto nameLabel = control->createChild<Label>(vehicle->name, singleton.labelFont);
+	nameLabel->Size = {controlLength - iconLenght, singleton.labelFont->getFontHeight()};
+	nameLabel->Location = {iconLenght, (control->Size.y - nameLabel->Size.y) / 2};
+
+	return control;
+}
+
+sp<Control> ControlGenerator::createBuildingAssignmentControl(GameState &state,
+                                                              sp<Building> building)
+{
+	const int controlLength = 200, controlHeight = 24, iconLenght = 36;
+
+	if (!singleton.initialised)
+	{
+		singleton.init(state);
+	}
+
+	auto frame = singleton.citySelect[0];
+	auto control = mksp<Graphic>(frame);
+	control->Size = control->SelectionSize = {controlLength, controlHeight};
+	control->Name = "ORG_FRAME";
+	control->setData(building);
+
+	auto buildingIcon =
+	    control->createChild<Graphic>(building->owner->icon); // TODO: set vanilla building icon
+	buildingIcon->AutoSize = true;
+	buildingIcon->Location = {1, 1};
+	buildingIcon->Name = "ORG_ICON";
+
+	UString name(building->name);
+	for (auto b : state.player_bases)
+	{
+		if (b.second->building == building)
+		{
+			name = b.second->name;
+			break;
+		}
+	}
+	auto nameLabel = control->createChild<Label>(name, singleton.labelFont);
+	nameLabel->Size = {controlLength - iconLenght, singleton.labelFont->getFontHeight()};
+	nameLabel->Location = {iconLenght, (control->Size.y - nameLabel->Size.y) / 2};
+
+	return control;
+}
+
+sp<Control> ControlGenerator::createAgentAssignmentControl(GameState &state, sp<Agent> agent)
+{
+	const int controlLength = 200, controlHeight = 24, iconLength = 36;
+
+	if (!singleton.initialised)
+	{
+		singleton.init(state);
+	}
+
+	auto control = mksp<Control>();
+	control->setData(agent);
+	control->Size = control->SelectionSize = {controlLength, controlHeight};
+	control->Name = "AGENT_PORTRAIT";
+
+	auto icon = createAgentIcon(state, agent, UnitSelectionState::Unselected, false);
+	icon->Size = {iconLength, controlHeight};
+	icon->setParent(control);
+
+	auto nameLabel = control->createChild<Label>(agent->name, singleton.labelFont);
+	nameLabel->Size = {controlLength - iconLength, singleton.labelFont->getFontHeight()};
+	nameLabel->Location = {iconLength, (control->Size.y - nameLabel->Size.y) / 2};
+
+	return control;
+}
+
+sp<Control> ControlGenerator::createAgentIcon(GameState &state, sp<Agent> agent,
+                                              UnitSelectionState forcedSelectionState,
+                                              bool forceFade)
+{
+	auto info = createAgentInfo(state, agent, forcedSelectionState, forceFade);
+	auto icon = mksp<Graphic>();
+	icon->AutoSize = true;
+	icon->Name = AGENT_ICON_NAME;
+	fillAgentControl(state, icon, info);
+	icon->setData(mksp<CityUnitState>(info.state));
+
+	return icon;
 }
 
 AgentInfo ControlGenerator::createAgentInfo(GameState &state, sp<Agent> a,
@@ -320,32 +464,37 @@ AgentInfo ControlGenerator::createAgentInfo(GameState &state, sp<Agent> a,
 	{
 		// City state icon
 		i.useState = true;
-		auto b = a->currentBuilding;
-		if (b)
-		{
-			if (b == a->homeBuilding)
-			{
-				i.state = CityUnitState::InBase;
-			}
-			else
-			{
-				i.state = CityUnitState::InBuilding;
-			}
-		}
-		else
-		{
-			if (a->currentVehicle)
-			{
-				i.state = CityUnitState::InVehicle;
-			}
-			else
-			{
-				i.state = CityUnitState::InMotion;
-			}
-		}
+		i.state = getCityUnitState(a);
 	}
 
 	return i;
+}
+
+CityUnitState ControlGenerator::getCityUnitState(sp<Agent> agent)
+{
+	auto building = agent->currentBuilding;
+	if (building)
+	{
+		if (building == agent->homeBuilding)
+		{
+			return CityUnitState::InBase;
+		}
+		else
+		{
+			return CityUnitState::InBuilding;
+		}
+	}
+	else
+	{
+		if (agent->currentVehicle)
+		{
+			return CityUnitState::InVehicle;
+		}
+		else
+		{
+			return CityUnitState::InMotion;
+		}
+	}
 }
 
 sp<Control> ControlGenerator::createAgentControl(GameState &state, const AgentInfo &info)
@@ -358,69 +507,112 @@ sp<Control> ControlGenerator::createAgentControl(GameState &state, const AgentIn
 }
 
 sp<Control> ControlGenerator::createLargeAgentControl(GameState &state, const AgentInfo &info,
-                                                      bool addSkill, bool labMode)
+                                                      int width, UnitSkillState skill)
 {
 	if (!singleton.initialised)
 	{
 		singleton.init(state);
 	}
-	auto size = labMode ? Vec2<int>{159, 31}
-	                    : Vec2<int>{130, singleton.labelFont->getFontHeight() * (addSkill ? 3 : 2)};
 
 	auto baseControl = mksp<Control>();
 	baseControl->setData(info.agent);
 	baseControl->Name = "AGENT_PORTRAIT";
-	baseControl->Size = size;
+	baseControl->Size = {width, singleton.labelFont->getFontHeight() * 2};
+	if (skill == UnitSkillState::Vertical)
+		baseControl->Size.y = singleton.labelFont->getFontHeight() * 3;
 
 	auto frameGraphic = baseControl->createChild<Graphic>();
 	frameGraphic->AutoSize = true;
-	frameGraphic->Location = {4, 4};
+	frameGraphic->Location = {4, 3};
 
 	fillAgentControl(state, frameGraphic, info);
 
 	auto nameLabel = baseControl->createChild<Label>(info.agent->name, singleton.labelFont);
 	nameLabel->Location = {40, 0};
-	nameLabel->Size = {labMode ? 72 : 100, labMode ? 31 : singleton.labelFont->getFontHeight() * 2};
+	nameLabel->Size = {baseControl->Size.x - 40, singleton.labelFont->getFontHeight() * 2};
 
-	if (addSkill)
+	if (skill != UnitSkillState::Hidden)
 	{
-		int skill = 0;
-		if (info.agent->type->role == AgentType::Role::Physicist)
-		{
-			skill = info.agent->current_stats.physics_skill;
-		}
-		else if (info.agent->type->role == AgentType::Role::BioChemist)
-		{
-			skill = info.agent->current_stats.biochem_skill;
-		}
-		else if (info.agent->type->role == AgentType::Role::Engineer)
-		{
-			skill = info.agent->current_stats.engineering_skill;
-		}
+		auto skillLabel = baseControl->createChild<Label>(
+		    format(tr("Skill %d"), info.agent->getSkill()), singleton.labelFont);
+		skillLabel->Tint = {192, 192, 192};
 
-		auto skillLabel =
-		    baseControl->createChild<Label>(format(tr("Skill %s"), skill), singleton.labelFont);
-		if (labMode)
+		skillLabel->Size = {nameLabel->Size.x, singleton.labelFont->getFontHeight()};
+		skillLabel->Location = {40, singleton.labelFont->getFontHeight() * 2};
+
+		if (skill == UnitSkillState::Horizontal)
 		{
-			skillLabel->Size = {45, 40};
-			skillLabel->Location = {115, 0};
-		}
-		else
-		{
-			skillLabel->Size = {100, singleton.labelFont->getFontHeight()};
-			skillLabel->Location = {40, singleton.labelFont->getFontHeight() * 2};
+			skillLabel->Size.x = 45;
+			nameLabel->Size.x -= 50;
+			skillLabel->Location = {baseControl->Size.x - 45, 0};
 		}
 	}
 
 	return baseControl;
 }
 
-sp<Control> ControlGenerator::createLargeAgentControl(GameState &state, sp<Agent> a, bool addSkill,
+sp<Control> ControlGenerator::createLargeAgentControl(GameState &state, sp<Agent> a, int width,
+                                                      UnitSkillState skill,
                                                       UnitSelectionState forcedSelectionState,
-                                                      bool forceFade, bool labMode)
+                                                      bool forceFade)
 {
 	auto info = createAgentInfo(state, a, forcedSelectionState, forceFade);
-	return createLargeAgentControl(state, info, addSkill, labMode);
+	return createLargeAgentControl(state, info, width, skill);
+}
+
+/**
+ * Create lab icon control with quantity label.
+ * @state - the game state
+ * @facility - lab facility
+ * @return - lab icon control
+ */
+sp<Control> ControlGenerator::createLabControl(sp<GameState> state, sp<Facility> facility)
+{
+	if (!singleton.initialised)
+	{
+		singleton.init(*state);
+	}
+
+	auto graphic = mksp<Graphic>(facility->type->sprite);
+	graphic->AutoSize = true;
+
+	auto spriteSize = facility->type->sprite->size;
+	auto label = graphic->createChild<Label>();
+	label->setFont(singleton.labelFont);
+	label->Size = {20, label->getFont()->getFontHeight()};
+	label->Location = {(spriteSize[0] - label->Size[0]) / 2, (spriteSize[1] - label->Size[1]) / 2};
+	label->TextHAlign = HorizontalAlignment::Centre;
+
+	return graphic;
+}
+
+/**
+ * Control containing two MultilistBox for assignment state.
+ * @controlLength - length of the control
+ */
+sp<Control> ControlGenerator::createDoubleListControl(const int controlLength)
+{
+	auto rubberItem = mksp<Control>();
+	rubberItem->Size = Vec2<int>{controlLength, 1};
+	rubberItem->setFuncPreRender([](sp<Control> control) {
+		int sizeY = 1;
+		for (auto &c : control->Controls)
+		{
+			if (!c->isVisible())
+				continue;
+			sizeY = std::max(sizeY, c->Location.y + c->Size.y);
+		}
+		control->Size.y = sizeY;
+	});
+
+	auto leftList = rubberItem->createChild<MultilistBox>();
+	leftList->Name = LEFT_LIST_NAME;
+
+	auto rightList = rubberItem->createChild<MultilistBox>();
+	rightList->Location = Vec2<int>{controlLength / 2, 0};
+	rightList->Name = RIGHT_LIST_NAME;
+
+	return rubberItem;
 }
 
 OrganisationInfo ControlGenerator::createOrganisationInfo(GameState &state, sp<Organisation> org)
@@ -445,6 +637,7 @@ sp<Control> ControlGenerator::createOrganisationControl(GameState &state,
 	// FIXME: There's an extra 1 pixel here that's annoying
 	baseControl->Size.x -= 1;
 	baseControl->Name = "ORG_FRAME_" + info.organisation->name;
+	baseControl->ToolTipText = tr(info.organisation->name);
 	baseControl->setData(info.organisation);
 
 	auto vehicleIcon = baseControl->createChild<Graphic>(info.organisation->icon);
@@ -494,6 +687,7 @@ void ControlGenerator::fillAgentControl(GameState &state, sp<Graphic> baseContro
 	}
 	baseControl->setImage(singleton.battleSelect[(int)info.selected]);
 	baseControl->setData(info.agent);
+	baseControl->ToolTipText = info.agent->name;
 
 	auto unitIcon = baseControl->createChild<Graphic>(info.agent->getPortrait().icon);
 	unitIcon->AutoSize = true;
@@ -599,4 +793,4 @@ bool OrganisationInfo::operator==(const OrganisationInfo &other) const
 	return (this->organisation == other.organisation && this->selected == other.selected);
 }
 bool OrganisationInfo::operator!=(const OrganisationInfo &other) const { return !(*this == other); }
-}
+} // namespace OpenApoc

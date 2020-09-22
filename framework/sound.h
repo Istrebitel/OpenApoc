@@ -53,6 +53,8 @@ class Sample : public ResObject
 {
   public:
 	AudioFormat format;
+	// The samplecount is for a single channel - e.g. having 2 channels means there's
+	// (2*sampleCount) total samples in *data
 	unsigned int sampleCount;
 	std::unique_ptr<uint8_t[]> data;
 	sp<BackendSampleData> backendData;
@@ -63,7 +65,7 @@ class Sample : public ResObject
 class MusicTrack : public ResObject
 {
   public:
-	unsigned int sampleCount; // may be estimated? Or 0 if we just don't know?
+	// unsigned int sampleCount; // may be estimated? Or 0 if we just don't know?
 	unsigned int requestedSampleBufferSize;
 	AudioFormat format;
 
@@ -118,16 +120,4 @@ class SoundBackend
 	virtual void setListenerPosition(Vec3<float> position);
 };
 
-class JukeBox
-{
-  public:
-	enum class PlayMode
-	{
-		Once,
-		Loop,
-	};
-	virtual ~JukeBox() = default;
-	virtual void play(std::vector<UString> tracks, PlayMode mode = PlayMode::Loop) = 0;
-	virtual void stop() = 0;
-};
-};
+}; // namespace OpenApoc

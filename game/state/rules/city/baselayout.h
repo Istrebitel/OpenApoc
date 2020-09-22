@@ -8,12 +8,11 @@
 namespace OpenApoc
 {
 
-class BaseLayout : public StateObject
+class BaseLayout : public StateObject<BaseLayout>
 {
-	STATE_OBJECT(BaseLayout)
   public:
 	std::set<Rect<int>> baseCorridors;
-	Vec2<int> baseLift;
+	Vec2<int> baseLift = {0, 0};
 };
 
 }; // namespace OpenApoc

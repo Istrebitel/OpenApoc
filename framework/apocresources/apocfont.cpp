@@ -4,12 +4,8 @@
 #include "framework/font.h"
 #include "framework/framework.h"
 #include "framework/logger.h"
-#include "framework/trace.h"
 #include "library/sp.h"
 
-// Disable automatic #pragma linking for boost - only enabled in msvc and that should provide boost
-// symbols as part of the module that uses it
-#define BOOST_ALL_NO_LIB
 #include <boost/locale.hpp>
 
 namespace OpenApoc
@@ -17,7 +13,6 @@ namespace OpenApoc
 
 sp<BitmapFont> ApocalypseFont::loadFont(const UString &fontDescPath)
 {
-	TRACE_FN_ARGS1("Font", fontDescPath);
 	auto file = fw().data->fs.open(fontDescPath);
 	if (!file)
 	{
@@ -60,9 +55,10 @@ sp<BitmapFont> ApocalypseFont::loadFont(const UString &fontDescPath)
 
 	int spacewidth = 0;
 	int height = 0;
+	int kerning = 0;
 	UString fontName;
 
-	std::map<UniChar, UString> charMap;
+	std::map<char32_t, UString> charMap;
 
 	fontName = fontNode.attribute("name").value();
 	if (fontName.empty())
@@ -81,6 +77,12 @@ sp<BitmapFont> ApocalypseFont::loadFont(const UString &fontDescPath)
 	if (spacewidth <= 0)
 	{
 		LogError("apocfont \"%s\" with invalid \"spacewidth\" attribute", fontName);
+		return nullptr;
+	}
+	kerning = fontNode.attribute("kerning").as_int();
+	if (kerning <= 0)
+	{
+		LogError("apocfont \"%s\" with invalid \"kerning\" attribute", fontName);
 		return nullptr;
 	}
 
@@ -102,7 +104,7 @@ sp<BitmapFont> ApocalypseFont::loadFont(const UString &fontDescPath)
 			continue;
 		}
 
-		auto pointString = boost::locale::conv::utf_to_utf<UniChar>(glyphString.cStr());
+		auto pointString = boost::locale::conv::utf_to_utf<char32_t>(glyphString.c_str());
 
 		if (pointString.length() != 1)
 		{
@@ -111,7 +113,7 @@ sp<BitmapFont> ApocalypseFont::loadFont(const UString &fontDescPath)
 			         fontName, glyphString, pointString.length());
 			continue;
 		}
-		UniChar c = pointString[0];
+		char32_t c = pointString[0];
 
 		if (charMap.find(c) != charMap.end())
 		{
@@ -123,7 +125,7 @@ sp<BitmapFont> ApocalypseFont::loadFont(const UString &fontDescPath)
 		charMap[c] = glyphPath;
 	}
 
-	auto font = BitmapFont::loadFont(charMap, spacewidth, height, fontName,
+	auto font = BitmapFont::loadFont(charMap, spacewidth, height, kerning, fontName,
 	                                 fw().data->loadPalette(fontNode.attribute("palette").value()));
 	return font;
 }

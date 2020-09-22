@@ -1,14 +1,11 @@
 #pragma once
 
+#include "framework/logger.h"
 #include "library/sp.h"
 #include "library/strings.h"
+#include "library/strings_format.h"
 #include <exception>
 #include <map>
-
-#ifndef NDEBUG
-#include "framework/logger.h"
-#include "library/strings_format.h"
-#endif
 
 namespace OpenApoc
 {
@@ -28,29 +25,14 @@ template <typename T> class StateRefMap : public std::map<UString, sp<T>>
 	}
 };
 
-#define STATE_OBJECT(Type)                                                                         \
-  public:                                                                                          \
-	static sp<Type> get(const GameState &state, const UString &id);                                \
-	static const UString &getId(const GameState &state, const sp<Type> ptr);                       \
-	static const UString &getPrefix();                                                             \
-	static const UString &getTypeName();                                                           \
-	static UString generateObjectID(GameState &state)                                              \
-	{                                                                                              \
-		auto id = getNextObjectID(state, getPrefix());                                             \
-		return getPrefix() + Strings::fromU64(id);                                                 \
-	}
-
-class StateObject
+template <typename T> class StateObject
 {
   public:
 	StateObject() = default;
 	virtual ~StateObject() = default;
 
-#if 0
-
 	static sp<T> get(const GameState &state, const UString &id);
 	static const UString &getId(const GameState &state, const sp<T> ptr);
-
 	static const UString &getPrefix();
 	static const UString &getTypeName();
 	static UString generateObjectID(GameState &state)
@@ -58,7 +40,6 @@ class StateObject
 		auto id = getNextObjectID(state, getPrefix());
 		return getPrefix() + Strings::fromU64(id);
 	}
-#endif
 
 	virtual void destroy(){};
 	// StateObjects are not copy-able
@@ -82,28 +63,18 @@ template <typename T> class StateRef
 	{
 		if (id.empty())
 			return;
-#ifndef NDEBUG
 		auto &prefix = T::getPrefix();
 		auto idPrefix = id.substr(0, prefix.length());
 		if (prefix != idPrefix)
 		{
-			LogError("%s object has invalid prefix - expected \"%s\" ID \"%s\"", T::getTypeName(),
-			         T::getPrefix(), id);
-			throw std::runtime_error(
-			    format("%s object has invalid prefix - expected \"%s\" ID \"%s\"", T::getTypeName(),
-			           T::getPrefix(), id)
-			        .str());
+			LogWarning("%s object has invalid prefix - expected \"%s\" ID \"%s\"", T::getTypeName(),
+			           T::getPrefix(), id);
 		}
-#endif
 		obj = T::get(*state, id);
-#ifndef NDEBUG
 		if (!obj)
 		{
 			LogError("No %s object matching ID \"%s\" found", T::getTypeName(), id);
-			throw std::runtime_error(
-			    format("No %s object matching ID \"%s\"", T::getTypeName(), id).str());
 		}
-#endif
 	}
 
   public:
@@ -195,7 +166,7 @@ template <typename T> class StateRef
 		return obj.get() != other;
 	}
 	StateRef<T> &operator=(const StateRef<T> &other) = default;
-	// Explicity handle "object = nullptr", as otherwise gcc doesn't know which overload to use
+	// Explicitly handle "object = nullptr", as otherwise gcc doesn't know which overload to use
 	StateRef<T> &operator=(std::nullptr_t)
 	{
 		this->clear();
@@ -212,6 +183,12 @@ template <typename T> class StateRef
 		if (!obj)
 			resolve();
 		return obj;
+	}
+	const T *get() const
+	{
+		if (!obj)
+			resolve();
+		return obj.get();
 	}
 	bool operator<(const StateRef<T> &other) const { return this->id < other.id; }
 	void clear()

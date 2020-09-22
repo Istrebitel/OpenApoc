@@ -21,6 +21,7 @@ TextButton::TextButton(const UString &Text, sp<BitmapFont> font)
       TextHAlign(HorizontalAlignment::Centre), TextVAlign(VerticalAlignment::Centre),
       RenderStyle(ButtonRenderStyle::Menu)
 {
+	isClickable = true;
 	label = mksp<Label>(Text, font);
 }
 
@@ -45,6 +46,8 @@ void TextButton::eventOccured(Event *e)
 
 void TextButton::onRender()
 {
+	Control::onRender();
+
 	if (label->getParent() == nullptr)
 	{
 		label->setParent(shared_from_this());

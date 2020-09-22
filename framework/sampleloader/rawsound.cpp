@@ -11,7 +11,8 @@ namespace
 using namespace OpenApoc;
 
 std::set<int> allowedSampleRates = {
-    11025, 22050,
+    11025,
+    22050,
 };
 
 class RawSampleLoader : public SampleLoader
@@ -26,7 +27,7 @@ class RawSampleLoader : public SampleLoader
 		// RAWSOUND:FILENAME:SAMPLERATE
 		// They are all assumed to be PCK_UINT8 1channel
 
-		auto splitString = path.split(':');
+		auto splitString = split(path, ":");
 		if (splitString.size() != 3)
 		{
 			LogInfo("String \"%s\" doesn't look like a rawsample - need 3 elements (got %zu)", path,
@@ -74,4 +75,4 @@ class RawSampleLoaderFactory : public SampleLoaderFactory
 namespace OpenApoc
 {
 SampleLoaderFactory *getRAWSampleLoaderFactory() { return new RawSampleLoaderFactory(); }
-}
+} // namespace OpenApoc

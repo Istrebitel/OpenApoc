@@ -2,8 +2,9 @@
 #include "framework/configfile.h"
 #include "framework/data.h"
 #include "framework/framework.h"
+#include "framework/modinfo.h"
+#include "framework/options.h"
 #include "framework/sound.h"
-#include "framework/trace.h"
 #include "game/state/battle/battle.h"
 #include "game/state/city/base.h"
 #include "game/state/city/building.h"
@@ -46,7 +47,7 @@
 namespace OpenApoc
 {
 
-GameState::GameState() : player(this) {}
+GameState::GameState() : player(this) { luaGameState.init(*this); }
 
 GameState::~GameState()
 {
@@ -62,12 +63,8 @@ GameState::~GameState()
 	for (auto &v : this->vehicles)
 	{
 		auto vehicle = v.second;
-		if (vehicle->tileObject)
-		{
-			vehicle->tileObject->removeFromMap();
-		}
-		vehicle->tileObject = nullptr;
-		// Detatch some back-pointers otherwise we get circular sp<> depedencies and leak
+		vehicle->removeFromMap(*this);
+		// Detach some back-pointers otherwise we get circular sp<> dependencies and leak
 		// FIXME: This is not a 'good' way of doing this, maybe add a destroyVehicle() function? Or
 		// make StateRefWeak<> or something?
 		//
@@ -83,14 +80,36 @@ GameState::~GameState()
 		for (auto &f : b.second->facilities)
 		{
 			if (f->lab)
-				f->lab->current_project = "";
-			f->lab = "";
+			{
+				f->lab->assigned_agents.clear();
+				f->lab->current_project.clear();
+				f->lab.clear();
+			}
 		}
 		b.second->building.clear();
 	}
 	for (auto &org : this->organisations)
 	{
 		org.second->current_relations.clear();
+	}
+	for (auto &city : this->cities)
+	{
+		for (auto &building : city.second->buildings)
+		{
+			auto &bld = building.second;
+			bld->city.clear();
+			bld->function.clear();
+			bld->owner.clear();
+			bld->base_layout.clear();
+			bld->base.clear();
+			bld->battle_map.clear();
+			bld->preset_crew.clear();
+			bld->current_crew.clear();
+			bld->currentVehicles.clear();
+			bld->currentAgents.clear();
+			bld->researchUnlock.clear();
+			bld->accessTopic.clear();
+		}
 	}
 }
 
@@ -116,8 +135,6 @@ StateRef<Organisation> GameState::getCivilian() { return this->civilian; }
 
 void GameState::initState()
 {
-	// FIXME: reseed rng when game starts
-
 	if (current_battle)
 	{
 		current_battle->initBattle(*this);
@@ -147,23 +164,33 @@ void GameState::initState()
 	for (auto &c : this->cities)
 	{
 		auto &city = c.second;
-		city->initMap(*this);
+		city->initCity(*this);
 		if (newGame)
 		{
 			// if (c.first == "CITYMAP_HUMAN")
 			{
 				city->fillRoadSegmentMap(*this);
 				city->initialSceneryLinkUp();
+
+				// Use values provided with original maps for now
+				// Uncomment this if algoritm improves
+				// for (auto &b : c.second->buildings)
+				//{
+				//	b.second->initBuilding(*this);
+				//}
 			}
 		}
 		// Add vehicles to map
 		for (auto &v : this->vehicles)
 		{
 			auto vehicle = v.second;
-			if (vehicle->city == city && !vehicle->currentBuilding)
+			if (vehicle->city == city && !vehicle->currentBuilding && !vehicle->betweenDimensions)
 			{
-				city->map->addObjectToMap(vehicle);
+
+				city->map->addObjectToMap(*this, vehicle);
 			}
+			vehicle->strategyImages = city_common_image_list->strategyImages;
+			vehicle->setupMover();
 		}
 		for (auto &p : c.second->projectiles)
 		{
@@ -175,22 +202,12 @@ void GameState::initState()
 			city->generatePortals(*this);
 		}
 	}
-	for (auto &v : this->vehicles)
-	{
-		v.second->strategyImages = city_common_image_list->strategyImages;
-		v.second->setupMover();
-		if (v.second->crashed)
-		{
-			v.second->smokeDoodad =
-			    v.second->city->placeDoodad({this, "DOODAD_13_SMOKE_FUME"}, v.second->position);
-		}
-	}
 	// Fill links for weapon's ammo
 	for (auto &t : this->agent_equipment)
 	{
 		for (auto &w : t.second->weapon_types)
 		{
-			w->ammo_types.emplace_back(this, t.first);
+			w->ammo_types.emplace(this, t.first);
 		}
 	}
 	for (auto &a : this->agent_types)
@@ -202,7 +219,16 @@ void GameState::initState()
 		a.second->leftHandItem = a.second->getFirstItemInSlot(EquipmentSlotType::LeftHand, false);
 		a.second->rightHandItem = a.second->getFirstItemInSlot(EquipmentSlotType::RightHand, false);
 	}
-	// Run nessecary methods for different types
+
+	if (newGame)
+	{
+		// Initialize organization funding by running throught two-week funding
+		// This lets workers to move around
+		updateHumanEconomy();
+		updateHumanEconomy();
+	}
+
+	// Run necessary methods for different types
 	research.updateTopicList();
 	// Apply mods (Stub until we actually have mods)
 	applyMods();
@@ -212,37 +238,7 @@ void GameState::initState()
 	skipTurboCalculations = config().getBool("OpenApoc.NewFeature.SkipTurboMovement");
 }
 
-void GameState::applyMods()
-{
-	if (config().getBool("OpenApoc.Mod.ATVTank"))
-	{
-		vehicle_types["VEHICLETYPE_GRIFFON_AFV"]->type = VehicleType::Type::ATV;
-	}
-	else
-	{
-		vehicle_types["VEHICLETYPE_GRIFFON_AFV"]->type = VehicleType::Type::Road;
-	}
-
-	if (config().getBool("OpenApoc.Mod.BSKLauncherSound"))
-	{
-		agent_equipment["AEQUIPMENTTYPE_BRAINSUCKER_LAUNCHER"]->fire_sfx =
-		    fw().data->loadSample("RAWSOUND:xcom3/rawsound/tactical/weapons/sucklaun.raw:22050");
-	}
-	else
-	{
-		agent_equipment["AEQUIPMENTTYPE_BRAINSUCKER_LAUNCHER"]->fire_sfx =
-		    fw().data->loadSample("RAWSOUND:xcom3/rawsound/tactical/weapons/powers.raw:22050");
-	}
-
-	bool crashVehicles = config().getBool("OpenApoc.Mod.CrashingVehicles");
-	for (auto &e : vehicle_types)
-	{
-		if (e.second->type != VehicleType::Type::UFO)
-		{
-			e.second->crash_health = crashVehicles ? e.second->health / 7 : 0;
-		}
-	}
-}
+void GameState::applyMods() { luaGameState.callHook("applyMods", 0, 0); }
 
 void GameState::setCurrentCity(StateRef<City> city)
 {
@@ -489,24 +485,27 @@ void GameState::validateAgentEquipment()
 
 void GameState::fillOrgStartingProperty()
 {
-	auto buildingIt = this->cities["CITYMAP_HUMAN"]->buildings.begin();
-
 	for (auto &o : this->organisations)
 	{
 		o.second->updateVehicleAgentPark(*this);
 		o.second->updateHirableAgents(*this);
 		for (auto &m : o.second->missions[{this, "CITYMAP_HUMAN"}])
 		{
-			m.next += gameTime.getTicks() + randBoundsInclusive(rng, (uint64_t)0,
-			                                                    m.pattern.maxIntervalRepeat -
-			                                                        m.pattern.minIntervalRepeat) -
-			          m.pattern.minIntervalRepeat / 2;
+			m.next +=
+			    gameTime.getTicks() +
+			    randBoundsInclusive(rng, (uint64_t)0,
+			                        m.pattern.maxIntervalRepeat - m.pattern.minIntervalRepeat) -
+			    m.pattern.minIntervalRepeat / 2;
 		}
 	}
+
+	luaGameState.callHook("newGamePostInit", 0, 0);
 }
 
 void GameState::startGame()
 {
+	luaGameState.callHook("newGame", 0, 0);
+
 	agentEquipmentTemplates.resize(10);
 
 	// Setup orgs
@@ -622,7 +621,7 @@ void GameState::startGame()
 // Fills out initial player property
 void GameState::fillPlayerStartingProperty()
 {
-	// Create the intial starting base
+	// Create the initial starting base
 	// Randomly shuffle buildings until we find one with a base layout
 	sp<City> humanCity = this->cities["CITYMAP_HUMAN"];
 	setCurrentCity({this, humanCity});
@@ -663,10 +662,12 @@ void GameState::fillPlayerStartingProperty()
 	}*/
 	for (auto &pair : this->initial_vehicles)
 	{
-		for (int i = 0; i < pair.second; i++)
+		auto v = current_city->createVehicle(*this, pair.first, this->getPlayer(), {this, bld});
+		v->homeBuilding = v->currentBuilding;
+		for (auto &eq : pair.second)
 		{
-			auto v = current_city->placeVehicle(*this, pair.first, this->getPlayer(), {this, bld});
-			v->homeBuilding = v->currentBuilding;
+			auto device = v->addEquipment(*this, eq);
+			device->ammo = eq->max_ammo;
 		}
 	}
 	// Give the player initial vehicle equipment
@@ -755,111 +756,6 @@ void GameState::fillPlayerStartingProperty()
 	bld->city->cityViewScreenCenter = {buildingCenter.x, buildingCenter.y, 1.0f};
 }
 
-void GameState::updateEconomy()
-{
-	std::list<UString> newItems;
-
-	for (auto &v : vehicle_types)
-	{
-		if (economy.find(v.first) != economy.end())
-		{
-			if (economy[v.first].update(*this, v.second->manufacturer == getPlayer()))
-			{
-				newItems.push_back(v.second->name);
-			}
-		}
-	}
-	for (auto &ve : vehicle_equipment)
-	{
-		if (economy.find(ve.first) != economy.end())
-		{
-			if (economy[ve.first].update(*this, ve.second->manufacturer == getPlayer()))
-			{
-				newItems.push_back(ve.second->name);
-			}
-		}
-	}
-	for (auto &va : vehicle_ammo)
-	{
-		if (economy.find(va.first) != economy.end())
-		{
-			if (economy[va.first].update(*this, va.second->manufacturer == getPlayer()))
-			{
-				newItems.push_back(va.second->name);
-			}
-		}
-	}
-	for (auto &ae : agent_equipment)
-	{
-		if (economy.find(ae.first) != economy.end())
-		{
-			if (economy[ae.first].update(*this, ae.second->manufacturer == getPlayer()))
-			{
-				newItems.push_back(ae.second->name);
-			}
-		}
-	}
-
-	if (!newItems.empty())
-	{
-		LogWarning("Notify that new items are here!");
-		for (auto &s : newItems)
-		{
-			LogWarning("%s", s);
-		}
-	}
-}
-
-void OpenApoc::GameState::updateUFOGrowth()
-{
-	int week = this->gameTime.getWeek();
-	auto growth = this->ufo_growth_lists.find(format("%s%d", UFOGrowth::getPrefix(), week));
-	if (growth == this->ufo_growth_lists.end())
-	{
-		growth = this->ufo_growth_lists.find(format("%s%s", UFOGrowth::getPrefix(), "DEFAULT"));
-	}
-	auto limit = this->ufo_growth_lists.find(format("%s%s", UFOGrowth::getPrefix(), "LIMIT"));
-
-	if (growth != this->ufo_growth_lists.end())
-	{
-		StateRef<City> city = {this, "CITYMAP_ALIEN"};
-		StateRef<Organisation> alienOrg = {this, "ORG_ALIEN"};
-		std::uniform_int_distribution<int> xyPos(20, 120);
-
-		// Set a list of limits for vehicle types
-		std::map<UString, int> vehicleLimits;
-		// Increase value by limit
-		for (auto &v : limit->second->vehicleTypeList)
-		{
-			vehicleLimits[v.first] += v.second;
-		}
-		// Subtract existing vehicles
-		for (auto &v : vehicles)
-		{
-			if (v.second->owner == alienOrg && v.second->city == city)
-			{
-				vehicleLimits[v.second->type.id]--;
-			}
-		}
-
-		for (auto &vehicleEntry : growth->second->vehicleTypeList)
-		{
-			auto vehicleType = this->vehicle_types.find(vehicleEntry.first);
-			if (vehicleType != this->vehicle_types.end())
-			{
-				int toAdd = std::min(vehicleEntry.second, vehicleLimits[vehicleEntry.first]);
-				for (int i = 0; i < toAdd; i++)
-				{
-					auto &type = (*vehicleType).second;
-
-					auto v = city->placeVehicle(*this, {this, (*vehicleType).first}, alienOrg,
-					                            {xyPos(rng), xyPos(rng), city->size.z - 1});
-				}
-			}
-		}
-	}
-}
-
 void GameState::invasion()
 {
 	auto invadedCity = StateRef<City>{this, "CITYMAP_HUMAN"};
@@ -896,7 +792,7 @@ void GameState::invasion()
 		preference = this->ufo_mission_preference.find(
 		    format("%s%s", UFOMissionPreference::getPrefix(), "DEFAULT"));
 	}
-	auto missionType = listRandomiser(rng, preference->second->missionList);
+	auto missionType = pickRandom(rng, preference->second->missionList);
 	// Compile list of missions rated by priority
 	std::map<int, sp<UFOIncursion>> incursions;
 	for (auto &e : ufo_incursions)
@@ -996,7 +892,7 @@ void GameState::invasion()
 			std::list<StateRef<Vehicle>> escortedRandomized;
 			while (!escortedCopy.empty())
 			{
-				auto item = setRandomiser(rng, escortedCopy);
+				auto item = pickRandom(rng, escortedCopy);
 				escortedCopy.erase(item);
 				escortedRandomized.push_back(item);
 			}
@@ -1050,13 +946,44 @@ bool GameState::canTurbo() const
 	return true;
 }
 
+/**
+ * Immediately remove all dead objects.
+ */
+void OpenApoc::GameState::cleanUpDeathNote()
+{
+	// Any additional death notes should processed here.
+	if (!vehiclesDeathNote.empty())
+	{
+		for (auto &name : this->vehiclesDeathNote)
+		{
+			vehicles.erase(name);
+
+			// Remove vehicle from selection
+			for (const auto &[cityId, city] : cities)
+			{
+				for (auto it = city->cityViewSelectedVehicles.begin();
+				     it != city->cityViewSelectedVehicles.end();)
+				{
+					if (it->id == name)
+					{
+						it = city->cityViewSelectedVehicles.erase(it);
+					}
+					else
+					{
+						++it;
+					}
+				}
+			}
+		}
+		vehiclesDeathNote.clear();
+	}
+}
+
 void GameState::update(unsigned int ticks)
 {
 	if (this->current_battle)
 	{
-		Trace::start("GameState::update::battles");
 		this->current_battle->update(*this, ticks);
-		Trace::end("GameState::update::battles");
 		gameTime.addTicks(ticks);
 	}
 	else
@@ -1064,21 +991,16 @@ void GameState::update(unsigned int ticks)
 		// Roll back to time before battle and stuff
 		if (gameTimeBeforeBattle.getTicks() != 0)
 		{
-			upateAfterBattle();
+			updateAfterBattle();
 		}
 
-		Trace::start("GameState::update::cities");
 		current_city->update(*this, ticks);
-		Trace::end("GameState::update::cities");
 
-		Trace::start("GameState::update::organisations");
 		for (auto &o : this->organisations)
 		{
 			o.second->updateMissions(*this);
 		}
-		Trace::end("GameState::update::organisations");
 
-		Trace::start("GameState::update::vehicles");
 		for (auto &v : this->vehicles)
 		{
 			if (v.second->city == current_city)
@@ -1086,9 +1008,8 @@ void GameState::update(unsigned int ticks)
 				v.second->update(*this, ticks);
 			}
 		}
-		Trace::end("GameState::update::vehicles");
+		cleanUpDeathNote();
 
-		Trace::start("GameState::update::agents");
 		for (auto &a : this->agents)
 		{
 			if (a.second->city == current_city)
@@ -1096,7 +1017,6 @@ void GameState::update(unsigned int ticks)
 				a.second->update(*this, ticks);
 			}
 		}
-		Trace::end("GameState::update::agents");
 
 		gameTime.addTicks(ticks);
 
@@ -1130,7 +1050,6 @@ void GameState::update(unsigned int ticks)
 
 void GameState::updateEndOfSecond()
 {
-	Trace::start("GameState::updateEachSecond::buildings");
 	for (auto &b : current_city->buildings)
 	{
 		b.second->updateCargo(*this);
@@ -1143,21 +1062,37 @@ void GameState::updateEndOfSecond()
 		{
 			for (auto &e : v->equipment)
 			{
-				if (e->type->type != EquipmentSlotType::VehicleWeapon || e->type->max_ammo == 0)
+				// We only can reload VehicleWeapon and VehicleEngine(?)
+				if (e->type->type != EquipmentSlotType::VehicleWeapon &&
+				    e->type->type != EquipmentSlotType::VehicleEngine) //  e->type->max_ammo == 0
 				{
 					continue;
 				}
-				if (e->reload(*this, base))
+				// Only show events for vehicles owned by current player
+				if (v->owner->name == getPlayer()->name)
 				{
-					// FIXME: Implement message vehicle rearmed / reloaded /refueled whatever
-					LogWarning(
-					    "Implement message vehicle rearmed / reloaded / refueled / whatever");
+					if (e->reload(*this, base))
+					{
+						switch (e->type->type)
+						{
+							case EquipmentSlotType::VehicleEngine:
+								fw().pushEvent(
+								    new GameVehicleEvent(GameEventType::VehicleRefuelled, v));
+								break;
+							case EquipmentSlotType::VehicleWeapon:
+								fw().pushEvent(
+								    new GameVehicleEvent(GameEventType::VehicleRearmed, v));
+								break;
+							default:
+								LogInfo("Implement the remaining messages for vehicle rearmed / "
+								        "reloaded / refueled / whatever");
+								break;
+						}
+					}
 				}
 			}
 		}
 	}
-	Trace::end("GameState::updateEachSecond::buildings");
-	Trace::start("GameState::updateEachSecond::vehicles");
 	for (auto &v : vehicles)
 	{
 		if (v.second->city == current_city)
@@ -1165,8 +1100,6 @@ void GameState::updateEndOfSecond()
 			v.second->updateEachSecond(*this);
 		}
 	}
-	Trace::end("GameState::updateEachSecond::vehicles");
-	Trace::start("GameState::updateEachSecond::agents");
 	for (auto &a : this->agents)
 	{
 		if (a.second->city == current_city)
@@ -1174,13 +1107,11 @@ void GameState::updateEndOfSecond()
 			a.second->updateEachSecond(*this);
 		}
 	}
-	Trace::end("GameState::updateEachSecond::agents");
 }
 
 void GameState::updateEndOfFiveMinutes()
 {
 	// TakeOver calculation stops when org is taken over
-	Trace::start("GameState::updateEndOfFiveMinutes::organisations");
 	for (auto &o : this->organisations)
 	{
 		if (o.second->takenOver)
@@ -1193,10 +1124,8 @@ void GameState::updateEndOfFiveMinutes()
 			break;
 		}
 	}
-	Trace::end("GameState::updateEndOfFiveMinutes::organisations");
 
 	// Detection calculation stops when detection happens
-	Trace::start("GameState::updateEndOfFiveMinutes::buildings");
 	for (auto &b : current_city->buildings)
 	{
 		bool detected = b.second->ticksDetectionTimeOut > 0;
@@ -1210,40 +1139,30 @@ void GameState::updateEndOfFiveMinutes()
 	{
 		b.second->updateCargo(*this);
 	}
-	Trace::end("GameState::updateEndOfFiveMinutes::buildings");
 }
 
 void GameState::updateEndOfHour()
 {
-	Trace::start("GameState::updateEndOfHour::agents");
 	for (auto &a : this->agents)
 	{
 		a.second->updateHourly(*this);
 	}
-	Trace::end("GameState::updateEndOfHour::agents");
-	Trace::start("GameState::updateEndOfHour::labs");
 	for (auto &lab : this->research.labs)
 	{
 		Lab::update(TICKS_PER_HOUR, {this, lab.second}, shared_from_this());
 	}
-	Trace::end("GameState::updateEndOfHour::labs");
-	Trace::start("GameState::updateEndOfHour::cities");
 	for (auto &c : this->cities)
 	{
 		c.second->hourlyLoop(*this);
 	}
-	Trace::end("GameState::updateEndOfHour::cities");
-	Trace::start("GameState::updateEndOfHour::organisations");
 	for (auto &o : this->organisations)
 	{
 		o.second->updateInfiltration(*this);
 	}
-	Trace::end("GameState::updateEndOfHour::organisations");
 }
 
 void GameState::updateEndOfDay()
 {
-	Trace::start("GameState::updateEndOfDay::bases");
 	for (auto &b : this->player_bases)
 	{
 		for (auto &f : b.second->facilities)
@@ -1259,45 +1178,154 @@ void GameState::updateEndOfDay()
 			}
 		}
 	}
-	Trace::end("GameState::updateEndOfDay::bases");
-	Trace::start("GameState::updateEndOfDay::organisations");
 	for (auto &o : this->organisations)
 	{
 		o.second->updateVehicleAgentPark(*this);
 		o.second->updateHirableAgents(*this);
+		o.second->updateDailyInfiltrationHistory();
 	}
-	Trace::end("GameState::updateEndOfDay::organisations");
-	Trace::start("GameState::updateEndOfDay::agents");
 	for (auto &a : this->agents)
 	{
 		a.second->updateDaily(*this);
 	}
-	Trace::end("GameState::updateEndOfDay::agents");
-	Trace::start("GameState::updateEndOfDay::cities");
 	for (auto &c : this->cities)
 	{
 		c.second->dailyLoop(*this);
 	}
-	Trace::end("GameState::updateEndOfDay::cities");
 }
 
 void GameState::updateEndOfWeek()
 {
-	LogWarning("Implement economy for orgs, for now just give em cash");
-	for (auto &o : organisations)
+	updateHumanEconomy();
+
+	luaGameState.callHook("updateEndOfWeek", 0, 0);
+}
+
+// Recalculates AI organization and civilian finances, updating budgets and salaries
+void GameState::updateHumanEconomy()
+{
+	// TODO: remove hardcoded references
+	auto humanCity = cities["CITYMAP_HUMAN"];
+
+	humanCity->populationWorking = 0;
+	// Game resets only Government income, it's not right logically but will keep it to match OG
+	government->income = 0;
+
+	// Step 1. Everybody gets paid according to the current rates
+	int totalCivilianIncome = 0;
+	for (auto &[id, org] : organisations)
 	{
-		if (o.first == player.id)
+		if (id != player.id && id != aliens.id)
 		{
-			continue;
+			for (auto &b : org->buildings)
+			{
+				// validate the original data
+				if (b->currentWage < 0)
+					b->currentWage = 0;
+
+				org->income += b->calculateIncome();
+				humanCity->populationWorking += b->currentWorkforce;
+				totalCivilianIncome += b->currentWage * b->currentWorkforce;
+			}
+			org->balance += org->income;
 		}
-		if (o.second->balance < 100000)
+	}
+	humanCity->averageWage =
+	    (humanCity->populationWorking) ? totalCivilianIncome / humanCity->populationWorking : 0;
+
+	// Step 2. Government additionally gets 10% of civilian income as taxes
+	government->balance += totalCivilianIncome / 10;
+
+	// Step 3. Calculate civilians leaving work because of the low wage
+	const int minimumWage = std::max(humanCity->averageWage, 30);
+	for (auto &[id, build] : humanCity->buildings)
+	{
+		if (build->currentWage < minimumWage)
 		{
-			o.second->balance = 100000;
+			const int satisfiedWorkers = build->currentWorkforce * build->currentWage / minimumWage;
+			const int workersLeaving = build->currentWorkforce - satisfiedWorkers;
+			build->currentWorkforce = satisfiedWorkers;
+			humanCity->populationWorking -= workersLeaving;
+			humanCity->populationUnemployed += workersLeaving;
 		}
 	}
 
-	updateUFOGrowth();
-	updateEconomy();
+	// Step 4. Civilians will try to apply for a new job (up to 5 times)
+	// Workforce initially expect 20% higher wages to be re-hired, but will reduce demands
+	int expectedWage = humanCity->averageWage * 12 / 10;
+	const int defaultSalary = humanCity->civilianSalary;
+	for (int attempt = 0; attempt < 5; ++attempt)
+	{
+		// Check if there's still civilians without work
+		if (humanCity->populationUnemployed <= 0)
+			break;
+
+		for (auto &[id, build] : humanCity->buildings)
+		{
+			if (build->currentWage > expectedWage)
+			{
+				int workersJoining = humanCity->populationUnemployed;
+				if (build->currentWage < defaultSalary * 30 / 100)
+				{
+					workersJoining = 0;
+				}
+				else if (build->currentWage < defaultSalary * 75 / 100)
+				{
+					// std::min so we can't overflow here
+					workersJoining = workersJoining * std::min(build->currentWage, 100) / 100;
+					// fall-through was intended
+					if (build->currentWage < defaultSalary * 60 / 100)
+						workersJoining /= 10;
+					if (build->currentWage < defaultSalary * 45 / 100)
+						workersJoining /= 20;
+				}
+
+				// make sure there's room for everybody
+				workersJoining =
+				    std::min(workersJoining, build->maximumWorkforce - build->currentWorkforce);
+
+				if (workersJoining)
+				{
+					build->currentWorkforce += workersJoining;
+					humanCity->populationWorking += workersJoining;
+					humanCity->populationUnemployed -= workersJoining;
+				}
+			}
+		}
+		// Reduce demands by 10%
+		expectedWage -= humanCity->averageWage / 10;
+	}
+
+	// Step 5. Adjust the building wages to attract new workers
+	for (auto &[id, build] : humanCity->buildings)
+	{
+		const int maximum = build->maximumWorkforce;
+		const int current = build->currentWorkforce;
+		const int profitabilityLimit = build->incomePerCapita - build->maintenanceCosts / maximum;
+		double wage = build->currentWage;
+
+		if (current < maximum * 60 / 100)
+		{
+			// severely understaffed, biggest salary bump
+			wage *= 1.2;
+		}
+		else if (current < maximum * 80 / 100)
+		{
+			wage *= 1.1;
+		}
+		else if (current < maximum * 90 / 100)
+		{
+			wage *= 1.05;
+		}
+		else if (current == maximum)
+		{
+			// if we're at 100% capacity reduce the salary
+			wage *= 0.95;
+		}
+
+		// make sure we're not losing money
+		build->currentWage = (wage < profitabilityLimit) ? wage : profitabilityLimit;
+	}
 }
 
 void GameState::updateTurbo()
@@ -1319,7 +1347,6 @@ void GameState::updateTurbo()
 
 void GameState::updateAfterTurbo()
 {
-	Trace::start("GameState::updateAfterTurbo::vehicles");
 	for (auto &v : this->vehicles)
 	{
 		if (v.second->city != current_city)
@@ -1332,7 +1359,6 @@ void GameState::updateAfterTurbo()
 		}
 		v.second->update(*this, randBoundsExclusive(rng, (unsigned)0, 20 * TICKS_PER_SECOND));
 	}
-	Trace::end("GameState::updateAfterTurbo::vehicles");
 }
 
 void GameState::updateBeforeBattle()
@@ -1340,11 +1366,10 @@ void GameState::updateBeforeBattle()
 	// Save time to roll back to
 	gameTimeBeforeBattle = GameTime(gameTime.getTicks());
 	// Some useless event just to know if something was reported
-	eventFromBattle = GameEventType::WeeklyReport;
-	missionLocationBattle = current_battle->mission_location_id;
+	eventFromBattle = GameEventType::None;
 }
 
-void GameState::upateAfterBattle()
+void GameState::updateAfterBattle()
 {
 	gameTime = GameTime(gameTimeBeforeBattle.getTicks());
 	gameTimeBeforeBattle = GameTime(0);
@@ -1384,6 +1409,8 @@ void GameState::upateAfterBattle()
 			fw().pushEvent(new GameEvent(eventFromBattle));
 			break;
 		}
+		default:
+			break;
 	}
 }
 
@@ -1434,6 +1461,49 @@ int GameScore::getTotal()
 {
 	return tacticalMissions + researchCompleted + alienIncidents + craftShotDownUFO +
 	       craftShotDownXCom + incursions + cityDamage;
+}
+
+void GameState::loadMods()
+{
+	auto mods = split(Options::modList.get(), ":");
+	for (const auto &modString : mods)
+	{
+		LogWarning("loading mod \"%s\"", modString);
+		auto modPath = Options::modPath.get() + "/" + modString;
+		auto modInfo = ModInfo::getInfo(modPath);
+		if (!modInfo)
+		{
+			LogError("Failed to load ModInfo for mod \"%s\"", modString);
+			continue;
+		}
+		LogWarning("Loaded modinfo for mod ID \"%s\"", modInfo->getID());
+		if (modInfo->getStatePath() != "")
+		{
+			auto modStatePath = modPath + "/" + modInfo->getStatePath();
+			LogWarning("Loading mod gamestate \"%s\"", modStatePath);
+
+			if (!this->loadGame(modStatePath))
+			{
+				LogError("Failed to load mod ID \"%s\"", modInfo->getID());
+			}
+		}
+
+		const auto &modLoadScript = modInfo->getModLoadScript();
+
+		if (!modLoadScript.empty())
+		{
+			LogInfo("Executing modLoad script \"%s\" for mod \"%s\"", modLoadScript,
+			        modInfo->getID());
+			this->luaGameState.runScript(modLoadScript);
+		}
+	}
+}
+
+bool GameState::appendGameState(const UString &gamestatePath)
+{
+	LogInfo("Appending gamestate \"%s\"", gamestatePath);
+	auto systemPath = fw().data->fs.resolvePath(gamestatePath);
+	return this->loadGame(systemPath);
 }
 
 }; // namespace OpenApoc

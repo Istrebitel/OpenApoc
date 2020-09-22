@@ -1,5 +1,6 @@
 #pragma once
 
+#include "game/state/city/vehiclemission.h"
 #include "game/state/gametime.h"
 #include "game/state/rules/city/vehicletype.h"
 #include "game/state/shared/equipment.h"
@@ -15,6 +16,8 @@
 
 namespace OpenApoc
 {
+// Smoke slightly over vehicle.
+static const Vec3<float> SMOKE_DOODAD_SHIFT{0.0f, 0.0f, 0.25f};
 
 static const unsigned CLOAK_TICKS_REQUIRED_VEHICLE = TICKS_PER_SECOND * 3 / 2;
 static const unsigned TELEPORT_TICKS_REQUIRED_VEHICLE = TICKS_PER_SECOND * 30;
@@ -44,8 +47,8 @@ static const float FV_PLOW_CHANCE_HIGH_SPEED_MULTIPLIER = 1.5f;
 static const float FV_PLOW_CHANCE_CONSTITUTION_MULTIPLIER = 2.0f;
 // How much 1 of X is the damage evasion chance (i.e. 8 means 1/8th or 12.5%)
 static const int FV_COLLISION_DAMAGE_ONE_IN_CHANCE_TO_EVADE = 8;
-// How much X in 100 is the chance for recovered vehicle to arrive intact (othrewise scrapped)
-static const int FV_CHANCE_TO_RECOVER_VEHICLE = 66;
+// How much X in 100 is the chance for recovered vehicle to arrive intact (otherwise scrapped)
+static const int FV_CHANCE_TO_RECOVER_VEHICLE = 100;
 // How much X in 100 is chance to recover every equipment part (otherwise scrapped)
 static const int FV_CHANCE_TO_RECOVER_EQUIPMENT = 90;
 // How much percent is "scrapped" sold for
@@ -146,14 +149,13 @@ class VehicleMover
 	virtual ~VehicleMover();
 };
 
-class Vehicle : public StateObject,
+class Vehicle : public StateObject<Vehicle>,
                 public std::enable_shared_from_this<Vehicle>,
                 public EquippableObject
 {
-	STATE_OBJECT(Vehicle)
   public:
 	~Vehicle() override;
-	Vehicle();
+	Vehicle() = default;
 
 	enum class AttackMode
 	{
@@ -162,7 +164,7 @@ class Vehicle : public StateObject,
 		Defensive,
 		Evasive
 	};
-	AttackMode attackMode;
+	AttackMode attackMode = AttackMode::Standard;
 
 	enum class Altitude
 	{
@@ -171,7 +173,15 @@ class Vehicle : public StateObject,
 		Standard = 6,
 		Low = 3
 	};
-	Altitude altitude;
+	Altitude altitude = Altitude::Standard;
+
+	enum class VehicleStatus
+	{
+		Operational,
+		Destroyed
+	};
+	VehicleStatus status = VehicleStatus::Operational;
+
 	// Adjusts position by altitude preference
 	Vec3<int> getPreferredPosition(Vec3<int> position) const;
 	Vec3<int> getPreferredPosition(int x, int y, int z = 0) const;
@@ -185,10 +195,10 @@ class Vehicle : public StateObject,
 	std::list<sp<VEquipment>> equipment;
 	std::list<StateRef<VEquipmentType>> loot;
 	StateRef<City> city;
-	Vec3<float> position;
-	Vec3<float> goalPosition;
+	Vec3<float> position = {0, 0, 0};
+	Vec3<float> goalPosition = {0, 0, 0};
 	std::list<Vec3<float>> goalWaypoints;
-	Vec3<float> velocity;
+	Vec3<float> velocity = {0, 0, 0};
 	float facing = 0.0f;
 	float goalFacing = 0.0f;
 	float angularVelocity = 0.0f;
@@ -229,6 +239,9 @@ class Vehicle : public StateObject,
 	sp<TileObjectVehicle> tileObject;
 	sp<TileObjectShadow> shadowObject;
 
+	// If the vehicle is currently traveling through a dimension gate
+	bool betweenDimensions = false;
+
 	/* leave the building and put vehicle into the city */
 	void leaveDimensionGate(GameState &state);
 	/* 'enter' the vehicle into a building*/
@@ -239,6 +252,10 @@ class Vehicle : public StateObject,
 	void enterBuilding(GameState &state, StateRef<Building> b);
 	/* Sets up the 'mover' after state serialize in */
 	void setupMover();
+	// Remove all tile objects that belongs to vehicle.
+	void removeFromMap(GameState &state);
+	// Set the vehicle crashed (or not).
+	void setCrashed(GameState &state, bool crashed = true);
 
 	void processRecoveredVehicle(GameState &state);
 	void dropCarriedVehicle(GameState &state);
@@ -275,7 +292,8 @@ class Vehicle : public StateObject,
 	                                                   sp<TileObjectVehicle> vehicleTile,
 	                                                   Vec2<int> arc = {8, 8});
 	bool fireWeaponsPointDefense(GameState &state, Vec2<int> arc = {8, 8});
-	void fireWeaponsNormal(GameState &state, Vec2<int> arc = {8, 8});
+
+	bool fireAtBuilding(GameState &state, Vec2<int> arc = {8, 8});
 	void fireWeaponsManual(GameState &state, Vec2<int> arc = {8, 8});
 	bool attackTarget(GameState &state, sp<TileObjectVehicle> enemyTile);
 	bool attackTarget(GameState &state, sp<TileObjectProjectile> enemyTile);
@@ -306,6 +324,7 @@ class Vehicle : public StateObject,
 	bool canTeleport() const;
 	bool hasTeleporter() const;
 	bool hasDimensionShifter() const;
+	bool isIdle() const;
 
 	// This is the 'sum' of all armors?
 	int getArmor() const;
@@ -313,6 +332,7 @@ class Vehicle : public StateObject,
 	int getTopSpeed() const;
 	int getAcceleration() const;
 	int getWeight() const;
+	int getMaxFuel() const;
 	int getFuel() const;
 	int getMaxPassengers() const;
 	int getPassengers() const;
@@ -321,6 +341,7 @@ class Vehicle : public StateObject,
 	int getMaxBio() const;
 	int getBio() const;
 	float getSpeed() const;
+	float getAngularSpeed() const;
 
 	void nextFrame(int ticks);
 
@@ -328,8 +349,10 @@ class Vehicle : public StateObject,
 
 	void setManualFirePosition(const Vec3<float> &pos);
 
-	// Adds mission to list of missions, returns true if successful
-	bool addMission(GameState &state, VehicleMission *mission, bool toBack = false);
+	// Adds mission to list of missions, returns iterator to mission if successful, missions.end()
+	// otherwise
+	typename decltype(missions)::iterator addMission(GameState &state, VehicleMission *mission,
+	                                                 bool toBack = false);
 	// Replaces all missions with provided mission, returns true if successful
 	bool setMission(GameState &state, VehicleMission *mission);
 	bool clearMissions(GameState &state, bool forced = false);
@@ -357,7 +380,7 @@ class Vehicle : public StateObject,
 	up<VehicleMover> mover;
 	sp<Doodad> smokeDoodad;
 	std::list<sp<Image>>::iterator animationFrame;
-	int animationDelay;
+	int animationDelay = 0;
 
 	// Following members are not serialized, but rather are set in initCity method
 

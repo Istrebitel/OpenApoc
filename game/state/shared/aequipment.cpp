@@ -1,7 +1,7 @@
 #include "game/state/shared/aequipment.h"
-#include "framework/configfile.h"
 #include "framework/framework.h"
 #include "framework/logger.h"
+#include "framework/options.h"
 #include "framework/sound.h"
 #include "game/state/battle/battle.h"
 #include "game/state/battle/battleitem.h"
@@ -288,6 +288,41 @@ void AEquipment::startFiring(WeaponAimingMode fireMode, bool instant)
 	aimingMode = fireMode;
 }
 
+static sp<AEquipment> getAutoreloadAmmoType(const AEquipment &weapon)
+{
+	LogAssert(weapon.type->type == AEquipmentType::Type::Weapon);
+	LogAssert(weapon.getPayloadType() != weapon.type);
+
+	// Check if the auto-reload option is disabled
+	if (!Options::optionAutoReload.get())
+	{
+		return nullptr;
+	}
+
+	// Prefer loading the same type of ammo again
+	if (weapon.lastLoadedAmmoType)
+	{
+		auto equippedAmmo = weapon.ownerAgent->getFirstItemByType(weapon.lastLoadedAmmoType);
+		if (equippedAmmo)
+		{
+			LogAssert(equippedAmmo->type->type == AEquipmentType::Type::Ammo);
+			return equippedAmmo;
+		}
+	}
+	// Otherwise find any possible ammo on the agent
+	for (const auto &ammoType : weapon.type->ammo_types)
+	{
+		auto equippedAmmo = weapon.ownerAgent->getFirstItemByType(ammoType);
+		if (equippedAmmo)
+		{
+			LogAssert(equippedAmmo->type->type == AEquipmentType::Type::Ammo);
+			return equippedAmmo;
+		}
+	}
+	// No ammo found
+	return nullptr;
+}
+
 void AEquipment::loadAmmo(GameState &state, sp<AEquipment> ammoItem)
 {
 	// Cannot load if this is using itself for payload or is not a weapon
@@ -303,16 +338,7 @@ void AEquipment::loadAmmo(GameState &state, sp<AEquipment> ammoItem)
 			LogError("Trying to auto-reload a weapon not in agent inventory!?");
 			return;
 		}
-		auto it = type->ammo_types.rbegin();
-		while (it != type->ammo_types.rend())
-		{
-			ammoItem = ownerAgent->getFirstItemByType(*it);
-			if (ammoItem)
-			{
-				break;
-			}
-			it++;
-		}
+		ammoItem = getAutoreloadAmmoType(*this);
 	}
 	// Cannot load non-ammo or if no ammo was found in the inventory
 	if (!ammoItem || ammoItem->type->type != AEquipmentType::Type::Ammo)
@@ -325,6 +351,8 @@ void AEquipment::loadAmmo(GameState &state, sp<AEquipment> ammoItem)
 	{
 		return;
 	}
+	// Store the loaded ammo type for autoreload
+	lastLoadedAmmoType = ammoItem->type;
 
 	// If this has ammo then swap
 	if (payloadType)
@@ -748,7 +776,7 @@ void AEquipment::fire(GameState &state, Vec3<float> targetPosition, StateRef<Bat
 		Vec3<float> velocity = toPos - fromPos;
 		velocity = glm::normalize(velocity);
 		// Move projectile a little bit forward so that it does not shoot from inside our chest
-		// We are protecting firer from collisison for first frames anyway, so this is redundant
+		// We are protecting firer from collision for first frames anyway, so this is redundant
 		// for all cases except when a unit fires with a brainsucker on it's head!
 		// But this also looks better since it does visually fire from the muzzle, not from inside
 		// the soldier
@@ -770,7 +798,11 @@ void AEquipment::fire(GameState &state, Vec3<float> targetPosition, StateRef<Bat
 	}
 
 	readyToFire = false;
-	ammo--;
+	if (!config().getBool("OpenApoc.Cheat.InfiniteAmmo") ||
+	    this->ownerAgent->owner != state.getPlayer())
+	{
+		ammo--;
+	}
 	if (ammo == 0 && payloadType)
 	{
 		payloadType.clear();
@@ -787,13 +819,13 @@ void AEquipment::throwItem(GameState &state, Vec3<int> targetPosition, float vel
 	if (state.battle_common_sample_list->throwSounds.size() > 0)
 	{
 		fw().soundBackend->playSample(
-		    listRandomiser(state.rng, state.battle_common_sample_list->throwSounds), position);
+		    pickRandom(state.rng, state.battle_common_sample_list->throwSounds), position);
 	}
 
 	// This will be modified by the accuracy algorithm
 	Vec3<float> targetLocationModified =
 	    Vec3<float>(targetPosition) + Vec3<float>{0.5f, 0.5f, 0.0f};
-	// This is proper target vector, stored to get differnece later
+	// This is proper target vector, stored to get difference later
 	Vec3<float> targetVector = targetLocationModified - position;
 	// Apply accuracy (if launching apply normal, narrower spread)
 	Battle::accuracyAlgorithmBattle(state, position, targetLocationModified,
@@ -893,7 +925,7 @@ bool AEquipment::calculateNextVelocityForThrow(float distanceXY, float diffZ, fl
 	//
 	// t = time, in ticks
 	// VelocityZ(t) = VelocityZ0 - (Falling_Acceleration / VELOCITY_SCALE_Z) * t;
-	// Let:	a = -Faclling_acc / VELOCITY_SCALE_Z/ 2 / TICK_SCALE,
+	// Let:	a = -Falling_acc / VELOCITY_SCALE_Z/ 2 / TICK_SCALE,
 	//		b = a + VelocityZ / TICK_SCALE,
 	//		c = diffZ
 	// z(t) = a*t^2 + b*t + c
@@ -908,7 +940,7 @@ bool AEquipment::calculateNextVelocityForThrow(float distanceXY, float diffZ, fl
 	// b =  (-c-a*t^2)/t
 	// VelocityZ = TICK_SCALE * ((-c -a * t^2) / t - a)
 	//
-	// Howver, item must fall from above to the target
+	// However, item must fall from above to the target
 	// Therefore, it's VelocityZ when arriving at target must be negative, and big enough
 	// If it's not, we must reduce VelocityX
 
@@ -920,7 +952,7 @@ bool AEquipment::calculateNextVelocityForThrow(float distanceXY, float diffZ, fl
 	// that makes the item fall on top of the tile
 	while (velocityXY > 0.0f)
 	{
-		// FIXME: Should we prevent very high Z-trajectories, unreallistic for heavy items?
+		// FIXME: Should we prevent very high Z-trajectories, unrealistic for heavy items?
 		t = distanceXY * TICK_SCALE / (velocityXY);
 		velocityZ = TICK_SCALE * ((-c - a * t * t) / t - a);
 		if (velocityZ - (FALLING_ACCELERATION_ITEM / VELOCITY_SCALE_BATTLE.z) * t < -0.125f)
@@ -998,7 +1030,7 @@ bool AEquipment::getVelocityForLaunch(const BattleUnit &unit, Vec3<int> target, 
 {
 	// Launchers use weapon's projectile speed as their XY speed
 	// Item's velocityXY is later multiplied by velocity_scale
-	// Projectie's speed is already in that scale, but is later multiplied by velocity_multiplier
+	// Projectile's speed is already in that scale, but is later multiplied by velocity_multiplier
 	// Therefore we multiply by velocity_mult and divide by scale to convert proj speed to item
 	// speed
 	velocityXY =

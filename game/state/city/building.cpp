@@ -9,6 +9,7 @@
 #include "game/state/city/vehiclemission.h"
 #include "game/state/gameevent.h"
 #include "game/state/gamestate.h"
+#include "game/state/rules/city/scenerytiletype.h"
 #include "game/state/shared/organisation.h"
 
 // Uncomment to make cargo system output warnings
@@ -17,7 +18,8 @@
 namespace OpenApoc
 {
 
-sp<BuildingFunction> BuildingFunction::get(const GameState &state, const UString &id)
+template <>
+sp<BuildingFunction> StateObject<BuildingFunction>::get(const GameState &state, const UString &id)
 {
 	auto it = state.building_functions.find(id);
 	if (it == state.building_functions.end())
@@ -28,18 +30,18 @@ sp<BuildingFunction> BuildingFunction::get(const GameState &state, const UString
 	return it->second;
 }
 
-const UString &BuildingFunction::getPrefix()
+template <> const UString &StateObject<BuildingFunction>::getPrefix()
 {
-	static UString prefix = "BUILDINGFUNCTION_";
+	static const UString prefix = "BUILDINGFUNCTION_";
 	return prefix;
 }
-const UString &BuildingFunction::getTypeName()
+template <> const UString &StateObject<BuildingFunction>::getTypeName()
 {
-	static UString name = "AgentType";
+	static const UString name = "BuildingFunction";
 	return name;
 }
 
-sp<Building> Building::get(const GameState &state, const UString &id)
+template <> sp<Building> StateObject<Building>::get(const GameState &state, const UString &id)
 {
 	for (auto &city : state.cities)
 	{
@@ -52,18 +54,19 @@ sp<Building> Building::get(const GameState &state, const UString &id)
 	return nullptr;
 }
 
-const UString &Building::getPrefix()
+template <> const UString &StateObject<Building>::getPrefix()
 {
 	static UString prefix = "BUILDING_";
 	return prefix;
 }
-const UString &Building::getTypeName()
+template <> const UString &StateObject<Building>::getTypeName()
 {
 	static UString name = "Building";
 	return name;
 }
 
-const UString &Building::getId(const GameState &state, const sp<Building> ptr)
+template <>
+const UString &StateObject<Building>::getId(const GameState &state, const sp<Building> ptr)
 {
 	static const UString emptyString = "";
 	for (auto &c : state.cities)
@@ -74,7 +77,7 @@ const UString &Building::getId(const GameState &state, const sp<Building> ptr)
 				return b.first;
 		}
 	}
-	LogError("No building matching pointer %p", ptr.get());
+	LogError("No building matching pointer %p", static_cast<void *>(ptr.get()));
 	return emptyString;
 }
 
@@ -92,6 +95,48 @@ bool Building::hasAliens() const
 		}
 	}
 	return false;
+}
+
+void Building::initBuilding(GameState &state)
+{
+	// Initialize economy data, done in the map/city editor or when game starts for the first time
+	// Not on save/load, that's why values are serialized
+	currentWage = city->civilianSalary;
+	maximumWorkforce = countActiveTiles() * function->workersPerTile / 2;
+	currentWorkforce = maximumWorkforce * 70 / 100;
+	maintenanceCosts = randBoundsInclusive(state.rng, 90, 110) * function->baseCost / 100;
+	incomePerCapita = randBoundsInclusive(state.rng, 90, 110) * function->baseIncome / 100;
+	investment = function->investmentValue;
+	prestige = function->prestige;
+}
+
+void Building::updateWorkforce()
+{
+	maximumWorkforce = countActiveTiles() * function->workersPerTile / 2;
+	if (maximumWorkforce < currentWorkforce)
+	{
+		city->populationUnemployed -= currentWorkforce - maximumWorkforce;
+		currentWorkforce = maximumWorkforce;
+	}
+}
+
+int Building::calculateIncome() const
+{
+	return currentWorkforce * (incomePerCapita - currentWage) - maintenanceCosts;
+}
+
+unsigned Building::countActiveTiles() const
+{
+	unsigned relevantTiles = 0;
+	for (const auto &p : buildingParts)
+	{
+		const auto tile = city->map->getTile(p);
+		if (tile->presentScenery && tile->presentScenery->type->isBuildingPart)
+		{
+			relevantTiles++;
+		}
+	}
+	return relevantTiles;
 }
 
 void Building::updateDetection(GameState &state, unsigned int ticks)
@@ -230,15 +275,14 @@ void Building::updateCargo(GameState &state)
 						ferries.emplace_back(&state, t.first);
 					}
 				}
-				if (ferries.size() == 0)
+				if (ferries.empty())
 				{
 					LogError("There is no ferry type for cargo with bio = %s in the game!?",
 					         needBio);
 					return;
 				}
 				// Spawn a random vehicle type and provide service
-				auto v =
-				    city->placeVehicle(state, listRandomiser(state.rng, ferries), ferryCompany);
+				auto v = city->placeVehicle(state, pickRandom(state.rng, ferries), ferryCompany);
 				v->enterBuilding(state, thisRef);
 				v->provideService(state, true);
 				spawnedFerry = true;
@@ -281,14 +325,13 @@ void Building::updateCargo(GameState &state)
 						ferries.emplace_back(&state, t.first);
 					}
 				}
-				if (ferries.size() == 0)
+				if (ferries.empty())
 				{
 					LogError("There is no ferry type for agents in the game!?");
 					return;
 				}
 				// Spawn a random vehicle type and provide service
-				auto v =
-				    city->placeVehicle(state, listRandomiser(state.rng, ferries), ferryCompany);
+				auto v = city->placeVehicle(state, pickRandom(state.rng, ferries), ferryCompany);
 				v->enterBuilding(state, thisRef);
 				v->provideService(state, true);
 				spawnedFerry = true;
@@ -422,9 +465,8 @@ void Building::updateCargo(GameState &state)
 					// Check it agrees to ferry for this org
 					if (checkRelationship)
 					{
-						if (e.first &&
-						    v.second->owner->isRelatedTo(e.first) ==
-						        Organisation::Relation::Hostile)
+						if (e.first && v.second->owner->isRelatedTo(e.first) ==
+						                   Organisation::Relation::Hostile)
 						{
 							continue;
 						}
@@ -545,9 +587,8 @@ void Building::updateCargo(GameState &state)
 					// Check it agrees to ferry for this org
 					if (checkRelationship)
 					{
-						if (e.first &&
-						    v.second->owner->isRelatedTo(e.first) ==
-						        Organisation::Relation::Hostile)
+						if (e.first && v.second->owner->isRelatedTo(e.first) ==
+						                   Organisation::Relation::Hostile)
 						{
 							continue;
 						}
@@ -632,7 +673,7 @@ void Building::updateCargo(GameState &state)
 
 	// Step 06: Try to load cargo on owner's vehicles if:
 	// - Allowed by game option
-	// - Cargo is expriring
+	// - Cargo is expiring
 	// - Cargo had no ferries ordered for it
 	if (config().getBool("OpenApoc.NewFeature.AllowManualCargoFerry"))
 	{
@@ -868,7 +909,7 @@ void Building::alienMovement(GameState &state)
 		return;
 	}
 	// Pick one random of them
-	auto bld = listRandomiser(state.rng, neighbours);
+	auto bld = pickRandom(state.rng, neighbours);
 	// For every alien calculate move percent as:
 	//   alien's move chance + random 0..30
 	// Calculate amount of moving aliens
@@ -888,6 +929,10 @@ void Building::alienMovement(GameState &state)
 			moveAmounts[e.first] = moveAmount;
 			totalMoveAmount += moveAmount;
 		}
+	}
+	if (totalMoveAmount == 0)
+	{
+		return;
 	}
 	// Chance to move is:
 	//   15 + 3 * amount + 20 (if owner is friendly+ to aliens)
@@ -914,7 +959,8 @@ void Building::alienMovement(GameState &state)
 	}
 	if (bld->base)
 	{
-		fw().pushEvent(new GameDefenseEvent(GameEventType::DefendTheBase, base, state.getAliens()));
+		fw().pushEvent(
+		    new GameDefenseEvent(GameEventType::DefendTheBase, bld->base, state.getAliens()));
 	}
 }
 
@@ -967,21 +1013,15 @@ void Building::buildingPartChange(GameState &state, Vec3<int> part, bool intact)
 	}
 	else
 	{
-		// Skin36 had some code figured out about this
-		// which counted score of parts and when it was below certain value
-		// building was considered dead
 		buildingParts.erase(part);
 		if (buildingParts.find(crewQuarters) == buildingParts.end())
 		{
-			while (!currentAgents.empty())
+			for (auto agent : currentAgents)
 			{
-				// For some reason need to assign first before calling die()
-				auto agent = *currentAgents.begin();
-				// Dying will remove agent from current agents list
 				agent->die(state, true);
 			}
 		}
-		if (!isAlive(state))
+		if (!isAlive())
 		{
 			if (base)
 			{
@@ -991,6 +1031,21 @@ void Building::buildingPartChange(GameState &state, Vec3<int> part, bool intact)
 	}
 }
 
-bool Building::isAlive(GameState &state) const { return !buildingParts.empty(); }
+void Building::decreasePendingInvestigatorCount(GameState &state)
+{
+	--this->pendingInvestigatorCount;
+	if (this->pendingInvestigatorCount == 0)
+	{
+		fw().pushEvent(new GameBuildingEvent(GameEventType::CommenceInvestigation,
+		                                     {&state, shared_from_this()}));
+	}
+	else if (this->pendingInvestigatorCount < 0) // shouldn't happen
+	{
+		LogError("Building investigate count < 0?");
+		this->pendingInvestigatorCount = 0;
+	}
+}
+
+bool Building::isAlive() const { return countActiveTiles() > 0; }
 
 } // namespace OpenApoc

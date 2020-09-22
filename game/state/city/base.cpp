@@ -20,6 +20,39 @@ namespace OpenApoc
 
 constexpr int Base::SIZE;
 
+template <> sp<Base> StateObject<Base>::get(const GameState &state, const UString &id)
+{
+	auto it = state.player_bases.find(id);
+	if (it == state.player_bases.end())
+	{
+		LogError("No baseas matching ID \"%s\"", id);
+		return nullptr;
+	}
+	return it->second;
+}
+
+template <> const UString &StateObject<Base>::getPrefix()
+{
+	static UString prefix = "BASE_";
+	return prefix;
+}
+template <> const UString &StateObject<Base>::getTypeName()
+{
+	static UString name = "Base";
+	return name;
+}
+template <> const UString &StateObject<Base>::getId(const GameState &state, const sp<Base> ptr)
+{
+	static const UString emptyString = "";
+	for (auto &b : state.player_bases)
+	{
+		if (b.second == ptr)
+			return b.first;
+	}
+	LogError("No base matching pointer %p", static_cast<void *>(ptr.get()));
+	return emptyString;
+}
+
 Base::Base(GameState &state, StateRef<Building> building) : building(building)
 {
 	corridors = std::vector<std::vector<bool>>(SIZE, std::vector<bool>(SIZE, false));
@@ -71,7 +104,7 @@ void Base::die(GameState &state, bool collapse)
 					// Re-route to another base
 					for (auto &b : state.player_bases)
 					{
-						if (b.second->building = building)
+						if (b.second->building == building)
 						{
 							continue;
 						}
@@ -381,6 +414,11 @@ void Base::destroyFacility(GameState &state, Vec2<int> pos)
 					facility->lab = "";
 					state.research.labs.erase(id);
 				}
+				if (facility->type->buildTime > 0)
+				{
+					building->owner->balance +=
+					    facility->type->buildCost * facility->buildTime / facility->type->buildTime;
+				}
 				facilities.erase(f);
 				break;
 			}
@@ -442,7 +480,9 @@ int Base::getCapacityUsed(GameState &state, FacilityType::Capacity type) const
 			}
 			break;
 		case FacilityType::Capacity::Chemistry:
+			[[fallthrough]];
 		case FacilityType::Capacity::Physics:
+			[[fallthrough]];
 		case FacilityType::Capacity::Workshop:
 			for (auto f = facilities.begin(); f != facilities.end(); ++f)
 			{
@@ -487,6 +527,9 @@ int Base::getCapacityUsed(GameState &state, FacilityType::Capacity type) const
 				total += ae->store_space * e.second;
 			}
 			break;
+		case FacilityType::Capacity::Nothing:
+			// Nothing needs to be handled
+			break;
 	}
 
 	return total;
@@ -529,46 +572,14 @@ int Base::getUsage(GameState &state, sp<Facility> facility, int delta) const
 
 int Base::getUsage(GameState &state, FacilityType::Capacity type, int delta) const
 {
-	if (getCapacityTotal(type) == 0)
+	int used = getCapacityUsed(state, type) + delta;
+	int total = getCapacityTotal(type);
+	if (total == 0)
 	{
-		return getCapacityUsed(state, type) + delta > 0 ? 999 : 0;
+		return used > 0 ? 999 : 0;
 	}
-	float usage = 0.0f;
-	usage = (float)getCapacityUsed(state, type) + (float)delta;
-	usage /= getCapacityTotal(type);
-	return std::min(999, static_cast<int>(ceilf(usage * 100.0f)));
-}
 
-sp<Base> Base::get(const GameState &state, const UString &id)
-{
-	auto it = state.player_bases.find(id);
-	if (it == state.player_bases.end())
-	{
-		LogError("No baseas matching ID \"%s\"", id);
-		return nullptr;
-	}
-	return it->second;
-}
-
-const UString &Base::getPrefix()
-{
-	static UString prefix = "BASE_";
-	return prefix;
-}
-const UString &Base::getTypeName()
-{
-	static UString name = "Base";
-	return name;
-}
-const UString &Base::getId(const GameState &state, const sp<Base> ptr)
-{
-	static const UString emptyString = "";
-	for (auto &b : state.player_bases)
-	{
-		if (b.second == ptr)
-			return b.first;
-	}
-	LogError("No base matching pointer %p", ptr.get());
-	return emptyString;
+	// + total / 2  due to rounding
+	return std::min(999, (100 * used + total / 2) / total);
 }
 }; // namespace OpenApoc

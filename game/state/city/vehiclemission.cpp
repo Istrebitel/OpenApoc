@@ -30,39 +30,45 @@
 namespace OpenApoc
 {
 
+using AdjustTargetResult = VehicleTargetHelper::AdjustTargetResult;
+using VehicleAvoidance = VehicleTargetHelper::VehicleAvoidance;
+using Reachability = VehicleTargetHelper::Reachability;
+
 namespace
 {
 // Add {0.5,0.5,0.5} to make it route to the center of the tile
 static const Vec3<float> offsetFlying{0.5f, 0.5f, 0.5f};
 static const Vec3<float> offsetLandInto{0.5f, 0.5f, 0.01f};
 static const Vec3<float> offsetLaunch{0.5f, 0.5f, -1.0f};
-}
 
-FlyingVehicleTileHelper::FlyingVehicleTileHelper(TileMap &map, Vehicle &v)
-    : FlyingVehicleTileHelper(map, *v.type, v.crashed, (int)v.altitude)
-{
-}
+// Self-destruct timer for UFOs.
+// division /5 because need to round to 5 mins
+// TODO: find a way how to extract from the game data
+static const std::map<UString, std::pair<unsigned, unsigned>> selfDestructTimer = {
+    {"VEHICLETYPE_ALIEN_PROBE", {10 / 5 * TICKS_PER_MINUTE, 90 / 5 * TICKS_PER_MINUTE}},
+    {"VEHICLETYPE_ALIEN_SCOUT", {10 / 5 * TICKS_PER_MINUTE, 90 / 5 * TICKS_PER_MINUTE}},
+    {"VEHICLETYPE_ALIEN_TRANSPORTER", {15 / 5 * TICKS_PER_MINUTE, 120 / 5 * TICKS_PER_MINUTE}},
+    {"VEHICLETYPE_ALIEN_FAST_ATTACK_SHIP", {15 / 5 * TICKS_PER_MINUTE, 120 / 5 * TICKS_PER_MINUTE}},
+    {"VEHICLETYPE_ALIEN_DESTROYER", {15 / 5 * TICKS_PER_MINUTE, 120 / 5 * TICKS_PER_MINUTE}},
+    {"VEHICLETYPE_ALIEN_ASSAULT_SHIP", {15 / 5 * TICKS_PER_MINUTE, 180 / 5 * TICKS_PER_MINUTE}},
+    {"VEHICLETYPE_ALIEN_BOMBER", {10 / 5 * TICKS_PER_MINUTE, 120 / 5 * TICKS_PER_MINUTE}},
+    {"VEHICLETYPE_ALIEN_ESCORT", {15 / 5 * TICKS_PER_MINUTE, 120 / 5 * TICKS_PER_MINUTE}},
+    {"VEHICLETYPE_ALIEN_BATTLESHIP", {60 / 5 * TICKS_PER_MINUTE, 240 / 5 * TICKS_PER_MINUTE}},
+    {"VEHICLETYPE_ALIEN_MOTHERSHIP", {60 / 5 * TICKS_PER_MINUTE, 240 / 5 * TICKS_PER_MINUTE}}};
+} // namespace
 
-FlyingVehicleTileHelper::FlyingVehicleTileHelper(TileMap &map, VehicleType &vehType, bool crashed,
-                                                 int altitude)
-    : map(map), type(vehType.type), crashed(crashed), altitude(altitude)
+FlyingVehicleTileHelper::FlyingVehicleTileHelper(TileMap &map, const Vehicle &v)
+    : map(map), v(v), altitude((int)v.altitude)
 {
 	int xMax = 0;
 	int yMax = 0;
-	for (auto &s : vehType.size)
+	for (const auto &s : v.type->size)
 	{
 		xMax = std::max(xMax, s.second.x);
 		yMax = std::max(yMax, s.second.y);
 	}
 	size = {xMax, yMax};
 	large = size.x > 1 || size.y > 1;
-}
-
-FlyingVehicleTileHelper::FlyingVehicleTileHelper(TileMap &map, VehicleType::Type type, bool crashed,
-                                                 Vec2<int> size, int altitude)
-    : map(map), type(type), crashed(crashed), size(size), large(size.x > 1 || size.y > 1),
-      altitude(altitude)
-{
 }
 
 bool FlyingVehicleTileHelper::canEnterTile(Tile *from, Tile *to, bool ignoreStaticUnits,
@@ -114,14 +120,20 @@ bool FlyingVehicleTileHelper::canEnterTile(Tile *from, Tile *to, bool, bool &, f
 	// Allow pathing into tiles with crashes
 	bool foundCrash = false;
 	bool foundScenery = false;
+	const auto self = v.shared_from_this();
 	for (auto &obj : to->intersectingObjects)
 	{
 		if (obj->getType() == TileObject::Type::Vehicle)
 		{
 			auto vehicleTile = std::static_pointer_cast<TileObjectVehicle>(obj);
+			// Large vehicles span multiple tiles
+			if (vehicleTile->getVehicle() == self)
+			{
+				continue;
+			}
 			// Non-crashed can go into crashed
 			bool vehicleCrashed = vehicleTile->getVehicle()->crashed;
-			if (crashed || !vehicleCrashed)
+			if (v.crashed || !vehicleCrashed)
 			{
 				return false;
 			}
@@ -202,12 +214,15 @@ float FlyingVehicleTileHelper::getDistanceStatic(Vec3<float> from, Vec3<float> t
 {
 	auto diffStart = toStart - from;
 	auto diffEnd = toEnd - from - Vec3<float>{1.0f, 1.0f, 1.0f};
-	auto xDiff = from.x >= toStart.x && from.x < toEnd.x ? 0.0f : std::min(std::abs(diffStart.x),
-	                                                                       std::abs(diffEnd.x));
-	auto yDiff = from.y >= toStart.y && from.y < toEnd.y ? 0.0f : std::min(std::abs(diffStart.y),
-	                                                                       std::abs(diffEnd.y));
-	auto zDiff = from.z >= toStart.z && from.z < toEnd.z ? 0.0f : std::min(std::abs(diffStart.z),
-	                                                                       std::abs(diffEnd.z));
+	auto xDiff = from.x >= toStart.x && from.x < toEnd.x
+	                 ? 0.0f
+	                 : std::min(std::abs(diffStart.x), std::abs(diffEnd.x));
+	auto yDiff = from.y >= toStart.y && from.y < toEnd.y
+	                 ? 0.0f
+	                 : std::min(std::abs(diffStart.y), std::abs(diffEnd.y));
+	auto zDiff = from.z >= toStart.z && from.z < toEnd.z
+	                 ? 0.0f
+	                 : std::min(std::abs(diffStart.z), std::abs(diffEnd.z));
 	return sqrtf(xDiff * xDiff + yDiff * yDiff + zDiff * zDiff);
 }
 
@@ -345,28 +360,11 @@ VehicleMission *VehicleMission::gotoLocation(GameState &state, Vehicle &v, Vec3<
 	mission->pickNearest = pickNearest;
 	mission->reRouteAttempts = attemptsToGiveUpAfter;
 	mission->allowTeleporter = allowTeleporter;
-	// Ground vehicles want to go to a closer road
-	if (v.type->type == VehicleType::Type::Road)
+	if (!VehicleTargetHelper::adjustTargetToClosest(state, v, target, VehicleAvoidance::Ignore,
+	                                                true)
+	         .foundSuitableTarget)
 	{
-		if (!adjustTargetToClosestRoad(v, target))
-		{
-			mission->cancelled = true;
-		}
-	}
-	// ATVs want to go to a closer ground
-	else if (v.type->type == VehicleType::Type::ATV)
-	{
-		if (!adjustTargetToClosestGround(v, target))
-		{
-			mission->cancelled = true;
-		}
-	}
-	else
-	{
-		if (!adjustTargetToClosestFlying(state, v, target))
-		{
-			mission->cancelled = true;
-		}
+		mission->cancelled = true;
 	}
 	mission->targetLocation = target;
 	return mission;
@@ -388,6 +386,10 @@ VehicleMission *VehicleMission::gotoPortal(GameState &state, Vehicle &v)
 				target = p->tileObject->getOwningTile()->position;
 			}
 		}
+	}
+	else
+	{
+		target = pickRandom(state.rng, v.city->portals)->position;
 	}
 	return gotoPortal(state, v, target);
 }
@@ -452,7 +454,8 @@ VehicleMission *VehicleMission::attackVehicle(GameState &, Vehicle &, StateRef<V
 	return mission;
 }
 
-VehicleMission *VehicleMission::attackBuilding(GameState &state, Vehicle &v,
+VehicleMission *VehicleMission::attackBuilding(GameState &state [[maybe_unused]],
+                                               Vehicle &v [[maybe_unused]],
                                                StateRef<Building> target)
 {
 	auto *mission = new VehicleMission();
@@ -483,7 +486,8 @@ VehicleMission *VehicleMission::followVehicle(GameState &, Vehicle &,
 	return mission;
 }
 
-VehicleMission *VehicleMission::recoverVehicle(GameState &state, Vehicle &v,
+VehicleMission *VehicleMission::recoverVehicle(GameState &state [[maybe_unused]],
+                                               Vehicle &v [[maybe_unused]],
                                                StateRef<Vehicle> target)
 {
 	auto *mission = new VehicleMission();
@@ -492,8 +496,8 @@ VehicleMission *VehicleMission::recoverVehicle(GameState &state, Vehicle &v,
 	return mission;
 }
 
-VehicleMission *VehicleMission::offerService(GameState &state, Vehicle &v,
-                                             StateRef<Building> target)
+VehicleMission *VehicleMission::offerService(GameState &state [[maybe_unused]],
+                                             Vehicle &v [[maybe_unused]], StateRef<Building> target)
 {
 	auto *mission = new VehicleMission();
 	mission->type = MissionType::OfferService;
@@ -518,9 +522,16 @@ VehicleMission *VehicleMission::snooze(GameState &, Vehicle &, unsigned int snoo
 
 VehicleMission *VehicleMission::selfDestruct(GameState &state, Vehicle &v)
 {
+	unsigned timer = TICKS_PER_HOUR;
+	auto timerUFO = selfDestructTimer.find(v.type.id);
+	if (timerUFO != selfDestructTimer.cend())
+	{
+		timer = 5 * std::uniform_int_distribution<unsigned>(timerUFO->second.first,
+		                                                    timerUFO->second.second)(state.rng);
+	}
 	auto *mission = new VehicleMission();
 	mission->type = MissionType::SelfDestruct;
-	mission->timeToSnooze = SELF_DESTRUCT_TIMER;
+	mission->timeToSnooze = timer;
 	return mission;
 }
 
@@ -574,7 +585,8 @@ VehicleMission *VehicleMission::patrol(GameState &, Vehicle &, bool home, unsign
 	return mission;
 }
 
-VehicleMission *VehicleMission::teleport(GameState &state, Vehicle &v, Vec3<int> target)
+VehicleMission *VehicleMission::teleport(GameState &state [[maybe_unused]],
+                                         Vehicle &v [[maybe_unused]], Vec3<int> target)
 {
 	auto *mission = new VehicleMission();
 	mission->type = MissionType::Teleport;
@@ -602,14 +614,24 @@ VehicleMission *VehicleMission::land(Vehicle &, StateRef<Building> b)
 	return mission;
 }
 
-bool VehicleMission::adjustTargetToClosestRoad(Vehicle &v, Vec3<int> &target)
+VehicleMission *VehicleMission::investigateBuilding(GameState &, Vehicle &v [[maybe_unused]],
+                                                    StateRef<Building> target, bool allowTeleporter)
+{
+	auto *mission = new VehicleMission();
+	mission->type = MissionType::InvestigateBuilding;
+	mission->targetBuilding = target;
+	mission->allowTeleporter = allowTeleporter;
+	return mission;
+}
+
+AdjustTargetResult VehicleTargetHelper::adjustTargetToClosestRoad(Vehicle &v, Vec3<int> &target)
 {
 	auto &map = *v.city->map;
-	auto scenery = map.getTile(target)->presentScenery;
+	auto reachability = isReachableTargetRoad(v, target);
 	// Clicked on road
-	if (scenery && scenery->type->tile_type == SceneryTileType::TileType::Road)
+	if (reachability == Reachability::Reachable)
 	{
-		return true;
+		return {reachability, true};
 	}
 	// Try to find road in general vicinity of +-10 tiles
 	Vec3<int> closestPos = target;
@@ -620,8 +642,8 @@ bool VehicleMission::adjustTargetToClosestRoad(Vehicle &v, Vec3<int> &target)
 		{
 			for (int z = 0; z < map.size.z; z++)
 			{
-				auto sceneryHere = map.getTile(x, y, z)->presentScenery;
-				if (sceneryHere && sceneryHere->type->tile_type == SceneryTileType::TileType::Road)
+				auto reachabilityHere = isReachableTargetRoad(v, {x, y, z});
+				if (reachabilityHere == Reachability::Reachable)
 				{
 					int dist = std::abs(target.x - x) + std::abs(target.y - y) +
 					           std::abs(target.z - z) / 2;
@@ -637,7 +659,7 @@ bool VehicleMission::adjustTargetToClosestRoad(Vehicle &v, Vec3<int> &target)
 	if (closestDist < INT_MAX)
 	{
 		target = closestPos;
-		return true;
+		return {reachability, true};
 	}
 	// Try to find road anywhere
 	for (int x = 0; x < map.size.x; x++)
@@ -651,8 +673,8 @@ bool VehicleMission::adjustTargetToClosestRoad(Vehicle &v, Vec3<int> &target)
 			}
 			for (int z = 0; z < map.size.z; z++)
 			{
-				auto sceneryHere = map.getTile(x, y, z)->presentScenery;
-				if (sceneryHere && sceneryHere->type->tile_type == SceneryTileType::TileType::Road)
+				auto reachabilityHere = isReachableTargetRoad(v, {x, y, z});
+				if (reachabilityHere == Reachability::Reachable)
 				{
 					int dist = std::abs(target.x - x) + std::abs(target.y - y) +
 					           std::abs(target.z - z) / 2;
@@ -668,17 +690,303 @@ bool VehicleMission::adjustTargetToClosestRoad(Vehicle &v, Vec3<int> &target)
 	if (closestDist < INT_MAX)
 	{
 		target = closestPos;
-		return true;
+		return {reachability, true};
 	}
 	LogWarning("No road exists anywhere in the city? Really?");
-	return false;
+	return {reachability, false};
 }
 
-bool VehicleMission::adjustTargetToClosestGround(Vehicle &v, Vec3<int> &target)
+AdjustTargetResult VehicleTargetHelper::adjustTargetToClosestGround(Vehicle &v, Vec3<int> &target)
+{
+	auto &map = *v.city->map;
+	auto reachability = isReachableTargetGround(v, target);
+	// Clicked on reachable ground
+	if (reachability == Reachability::Reachable)
+	{
+		return {reachability, true};
+	}
+	// Try to find ground in general vicinity of +-10 tiles
+	Vec3<int> closestPos = target;
+	int closestDist = INT_MAX;
+	for (int x = std::max(0, target.x - 10); x <= std::min(map.size.x - 1, target.x + 10); x++)
+	{
+		for (int y = std::max(0, target.y - 10); y <= std::min(map.size.y - 1, target.y + 10); y++)
+		{
+			for (int z = 0; z < map.size.z; z++)
+			{
+				auto reachabilityHere = isReachableTargetGround(v, {x, y, z});
+				if (reachabilityHere == Reachability::Reachable)
+				{
+					int dist = std::abs(target.x - x) + std::abs(target.y - y) +
+					           std::abs(target.z - z) / 2;
+					if (dist < closestDist)
+					{
+						closestDist = dist;
+						closestPos = {x, y, z};
+					}
+				}
+			}
+		}
+	}
+	if (closestDist < INT_MAX)
+	{
+		target = closestPos;
+		return {reachability, true};
+	}
+	// Try to find ground anywhere
+	for (int x = 0; x < map.size.x; x++)
+	{
+		for (int y = 0; y < map.size.y; y++)
+		{
+			// Already checked
+			if ((std::abs(target.x - x) <= 10) && (std::abs(target.y - y) <= 10))
+			{
+				continue;
+			}
+			for (int z = 0; z < map.size.z; z++)
+			{
+				auto reachabilityHere = isReachableTargetGround(v, {x, y, z});
+				if (reachabilityHere == Reachability::Reachable)
+				{
+					int dist = std::abs(target.x - x) + std::abs(target.y - y) +
+					           std::abs(target.z - z) / 2;
+					if (dist < closestDist)
+					{
+						closestDist = dist;
+						closestPos = {x, y, z};
+					}
+				}
+			}
+		}
+	}
+	if (closestDist < INT_MAX)
+	{
+		target = closestPos;
+		return {reachability, true};
+	}
+	LogError("NO GROUND IN THE CITY!? WTF?");
+	return {reachability, false};
+}
+
+AdjustTargetResult
+VehicleTargetHelper::adjustTargetToClosestFlying(GameState &state, Vehicle &v, Vec3<int> &target,
+                                                 const VehicleAvoidance vehicleAvoidance)
+{
+	auto &map = *v.city->map;
+	auto reachability = isReachableTargetFlying(v, target);
+	// Clicked on reachable tile
+	if (reachability == Reachability::Reachable ||
+	    (reachability == Reachability::BlockedByVehicle &&
+	     vehicleAvoidance == VehicleAvoidance::Ignore))
+	{
+		return {Reachability::Reachable, true};
+	}
+
+	// Check if target tile has no scenery permanently blocking it
+	// If it does, go up until we've got clear sky
+	while (reachability == Reachability::BlockedByScenery)
+	{
+		target.z++;
+		if (target.z >= map.size.z)
+		{
+			LogError("No space in the sky? Reached %d %d %d", target.x, target.y, target.z);
+			return {reachability, false};
+		}
+		reachability = isReachableTargetFlying(v, target);
+		if (reachability == Reachability::Reachable ||
+		    (reachability == Reachability::BlockedByVehicle &&
+		     vehicleAvoidance == VehicleAvoidance::Ignore))
+		{
+			return {Reachability::BlockedByScenery, true};
+		}
+	}
+
+	// Find a random location around the blocking vehicle that is not blocked
+
+	// How far to deviate from target point
+	int maxDiff = 2;
+	// Calculate bounds
+	int midX = target.x;
+	midX = midX + maxDiff + 1 > map.size.x ? map.size.x - maxDiff - 1
+	                                       : (midX - maxDiff < 0 ? maxDiff : midX);
+	int midY = target.y;
+	midY = midY + maxDiff + 1 > map.size.y ? map.size.y - maxDiff - 1
+	                                       : (midY - maxDiff < 0 ? maxDiff : midY);
+	int midZ = (int)v.altitude;
+	midZ = midZ + maxDiff + 1 > map.size.z ? map.size.z - maxDiff - 1
+	                                       : (midZ - maxDiff < 0 ? maxDiff : midZ);
+
+	if (vehicleAvoidance == VehicleAvoidance::PickNearbyPoint)
+	{
+		Vec3<int> newTarget;
+		bool foundNewTarget = false;
+		for (int i = 0; i <= maxDiff && !foundNewTarget; i++)
+		{
+			for (int x = midX - i; x <= midX + i && !foundNewTarget; x++)
+			{
+				for (int y = midY - i; y <= midY + i && !foundNewTarget; y++)
+				{
+					for (int z = midZ - i; z <= midZ + i; z++)
+					{
+						// Only pick points on the edge of each iteration
+						if (x == midX - i || x == midX + i || y == midY - i || y == midY + i ||
+						    z == midZ - i || z == midZ + i)
+						{
+							auto t = map.getTile(x, y, z);
+							if (t->ownedObjects.empty())
+							{
+								newTarget = t->position;
+								foundNewTarget = true;
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+		if (foundNewTarget)
+		{
+			LogWarning("Target %d,%d,%d was unreachable, found new closest target %d,%d,%d",
+			           target.x, target.y, target.z, newTarget.x, newTarget.y, newTarget.z);
+			target = newTarget;
+		}
+	}
+	else if (vehicleAvoidance == VehicleAvoidance::Sidestep)
+	{
+		std::list<Vec3<int>> sideStepLocations;
+
+		for (int x = midX - maxDiff; x <= midX + maxDiff; x++)
+		{
+			for (int y = midY - maxDiff; y <= midY + maxDiff; y++)
+			{
+				for (int z = midZ - maxDiff; z <= midZ + maxDiff; z++)
+				{
+					if (!map.tileIsValid(x, y, z))
+					{
+						continue;
+					}
+					auto t = map.getTile(x, y, z);
+					if (t->ownedObjects.empty())
+					{
+						sideStepLocations.push_back(t->position);
+					}
+				}
+			}
+		}
+		if (!sideStepLocations.empty())
+		{
+			auto newTarget = pickRandom(state.rng, sideStepLocations);
+			LogWarning("Target %s was unreachable, side-stepping to  %s.", target, newTarget);
+			target = newTarget;
+		}
+	}
+	else
+	{
+		LogError("Unknown value for vehicleAvoidance: %d", static_cast<int>(vehicleAvoidance));
+	}
+	return {reachability, true};
+}
+
+AdjustTargetResult
+VehicleTargetHelper::adjustTargetToClosest(GameState &state, Vehicle &v, Vec3<int> &target,
+                                           const VehicleAvoidance vehicleAvoidance,
+                                           bool adjustForFlying)
+{
+	switch (v.type->type)
+	{
+		case VehicleType::Type::Road:
+			return adjustTargetToClosestRoad(v, target);
+		case VehicleType::Type::ATV:
+			return adjustTargetToClosestGround(v, target);
+		default:
+			LogError("Vehicle [%s] has unknown type [%s]", v.name, v.type->name);
+			[[fallthrough]];
+		case VehicleType::Type::Flying:
+		case VehicleType::Type::UFO:
+			if (!adjustForFlying)
+			{
+				// Just report given target as reachable.
+				return {Reachability::Reachable, true};
+			}
+			return adjustTargetToClosestFlying(state, v, target, vehicleAvoidance);
+	}
+}
+
+Reachability VehicleTargetHelper::isReachableTarget(const Vehicle &v, Vec3<int> target)
+{
+	switch (v.type->type)
+	{
+		case VehicleType::Type::Road:
+			return isReachableTargetRoad(v, target);
+		case VehicleType::Type::ATV:
+			return isReachableTargetGround(v, target);
+		default:
+			LogError("Vehicle [%s] has unknown type [%s]", v.name, v.type->name);
+			[[fallthrough]];
+		case VehicleType::Type::Flying:
+		case VehicleType::Type::UFO:
+			return isReachableTargetFlying(v, target);
+	}
+}
+
+Reachability VehicleTargetHelper::isReachableTargetFlying(const Vehicle &v, Vec3<int> target)
+{
+	auto &map = *v.city->map;
+	auto targetTile = map.getTile(target);
+
+	// Check if target tile has no scenery permanently blocking it
+	for (auto &obj : targetTile->ownedObjects)
+	{
+		if (obj->getType() == TileObject::Type::Scenery)
+		{
+			auto sceneryTile = std::static_pointer_cast<TileObjectScenery>(obj);
+			if (!sceneryTile->scenery.lock()->type->isLandingPad)
+			{
+				return Reachability::BlockedByScenery;
+			}
+		}
+	}
+
+	// Check if target tile has no vehicle temporarily blocking it
+	for (auto &obj : targetTile->intersectingObjects)
+	{
+		if (obj->getType() == TileObject::Type::Vehicle)
+		{
+			auto otherVehicle = std::static_pointer_cast<TileObjectVehicle>(obj)->getVehicle();
+			// Don't collide with self.
+			if (v.name == otherVehicle->name)
+				continue;
+			// Non-crashed can go into crashed
+			if (v.crashed || !otherVehicle->crashed)
+			{
+				return Reachability::BlockedByVehicle;
+			}
+		}
+	}
+
+	return Reachability::Reachable;
+}
+
+Reachability VehicleTargetHelper::isReachableTargetRoad(const Vehicle &v, Vec3<int> target)
 {
 	auto &map = *v.city->map;
 	auto scenery = map.getTile(target)->presentScenery;
-	// Clicked on road
+
+	// Check if target tile is a road
+	if (scenery && scenery->type->tile_type == SceneryTileType::TileType::Road)
+	{
+		return Reachability::Reachable;
+	}
+
+	return Reachability::BlockedByScenery;
+}
+
+Reachability VehicleTargetHelper::isReachableTargetGround(const Vehicle &v, Vec3<int> target)
+{
+	auto &map = *v.city->map;
+	auto scenery = map.getTile(target)->presentScenery;
+
+	// Check if target tile can be accessed by an ATV
 	if (scenery)
 	{
 		auto walkMode = scenery->type->getATVMode();
@@ -699,285 +1007,13 @@ bool VehicleMission::adjustTargetToClosestGround(Vehicle &v, Vec3<int> &target)
 			}
 			// Intentional fall-through
 			case SceneryTileType::WalkMode::Into:
-				return true;
+				return Reachability::Reachable;
 			case SceneryTileType::WalkMode::None:
 				break;
 		}
 	}
-	// Try to find ground in general vicinity of +-10 tiles
-	Vec3<int> closestPos = target;
-	int closestDist = INT_MAX;
-	for (int x = std::max(0, target.x - 10); x <= std::min(map.size.x - 1, target.x + 10); x++)
-	{
-		for (int y = std::max(0, target.y - 10); y <= std::min(map.size.y - 1, target.y + 10); y++)
-		{
-			for (int z = 0; z < map.size.z; z++)
-			{
-				auto sceneryHere = map.getTile(x, y, z)->presentScenery;
-				if (sceneryHere)
-				{
-					auto walkMode = sceneryHere->type->getATVMode();
-					switch (walkMode)
-					{
-						case SceneryTileType::WalkMode::Onto:
-						{
-							// If moving to an "onto" tile must have clear above
-							auto checkedPos =
-							    (Vec3<int>)sceneryHere->currentPosition + Vec3<int>(0, 0, 1);
-							if (map.tileIsValid(checkedPos))
-							{
-								auto checkedTile = map.getTile(checkedPos);
-								if (checkedTile->presentScenery)
-								{
-									break;
-								}
-							}
-						}
-						// Intentional fall-through
-						case SceneryTileType::WalkMode::Into:
-						{
-							int dist = std::abs(target.x - x) + std::abs(target.y - y) +
-							           std::abs(target.z - z) / 2;
-							if (dist < closestDist)
-							{
-								closestDist = dist;
-								closestPos = {x, y, z};
-							}
-							break;
-						}
-						case SceneryTileType::WalkMode::None:
-							break;
-					}
-				}
-			}
-		}
-	}
-	if (closestDist < INT_MAX)
-	{
-		target = closestPos;
-		return true;
-	}
-	// Try to find ground anywhere
-	for (int x = 0; x < map.size.x; x++)
-	{
-		for (int y = 0; y < map.size.y; y++)
-		{
-			// Already checked
-			if ((std::abs(target.x - x) <= 10) && (std::abs(target.y - y) <= 10))
-			{
-				continue;
-			}
-			for (int z = 0; z < map.size.z; z++)
-			{
-				auto sceneryHere = map.getTile(x, y, z)->presentScenery;
-				if (sceneryHere)
-				{
-					auto walkMode = sceneryHere->type->getATVMode();
-					switch (walkMode)
-					{
-						case SceneryTileType::WalkMode::Onto:
-						{
-							// If moving to an "onto" tile must have clear above
-							auto checkedPos =
-							    (Vec3<int>)sceneryHere->currentPosition + Vec3<int>(0, 0, 1);
-							if (map.tileIsValid(checkedPos))
-							{
-								auto checkedTile = map.getTile(checkedPos);
-								if (checkedTile->presentScenery)
-								{
-									break;
-								}
-							}
-						}
-						// Intentional fall-through
-						case SceneryTileType::WalkMode::Into:
-						{
-							int dist = std::abs(target.x - x) + std::abs(target.y - y) +
-							           std::abs(target.z - z) / 2;
-							if (dist < closestDist)
-							{
-								closestDist = dist;
-								closestPos = {x, y, z};
-							}
-							break;
-						}
-						case SceneryTileType::WalkMode::None:
-							break;
-					}
-				}
-			}
-		}
-	}
-	if (closestDist < INT_MAX)
-	{
-		target = closestPos;
-		return true;
-	}
-	LogError("NO GROUND IN THE CITY!? WTF?");
-	return false;
-}
 
-bool VehicleMission::adjustTargetToClosestFlying(GameState &state, Vehicle &v, Vec3<int> &target,
-                                                 bool ignoreVehicles, bool pickNearest,
-                                                 bool &pickedNearest)
-{
-	auto &map = *v.city->map;
-	auto to = map.getTile(target);
-
-	// Check if target tile has no scenery permanently blocking it
-	// If it does, go up until we've got clear sky
-	while (true)
-	{
-		bool foundScenery = false;
-		bool foundCrash = false;
-
-		for (auto &obj : to->intersectingObjects)
-		{
-			if (obj->getType() == TileObject::Type::Vehicle)
-			{
-				auto vehicle = std::static_pointer_cast<TileObjectVehicle>(obj);
-				if (vehicle->getVehicle()->crashed)
-				{
-					foundCrash = true;
-					break;
-				}
-			}
-		}
-		for (auto &obj : to->ownedObjects)
-		{
-			if (obj->getType() == TileObject::Type::Scenery)
-			{
-				auto sceneryTile = std::static_pointer_cast<TileObjectScenery>(obj);
-				if (sceneryTile->scenery.lock()->type->isLandingPad)
-				{
-					continue;
-				}
-				foundScenery = true;
-				break;
-			}
-		}
-		if (foundCrash || !foundScenery)
-		{
-			break;
-		}
-		LogInfo("Cannot move to %d %d %d, contains scenery that is not a landing pad", target.x,
-		        target.y, target.z);
-		target.z++;
-		if (target.z >= map.size.z)
-		{
-			LogError("No space in the sky? Reached %d %d %d", target.x, target.y, target.z);
-			return false;
-		}
-		to = map.getTile(target);
-	}
-	// Check if target tile has no vehicle termporarily blocking it
-	// If it does, find a random location around it that is not blocked
-	bool containsVehicle = false;
-	if (!ignoreVehicles)
-	{
-		for (auto &obj : to->intersectingObjects)
-		{
-			if (obj->getType() == TileObject::Type::Vehicle)
-			{
-				auto vehicleTile = std::static_pointer_cast<TileObjectVehicle>(obj);
-				// Non-crashed can go into crashed
-				if (v.crashed || !vehicleTile->getVehicle()->crashed)
-				{
-					containsVehicle = true;
-					break;
-				}
-			}
-		}
-	}
-	if (containsVehicle)
-	{
-		// How far to deviate from target point
-		int maxDiff = 2;
-		// Calculate bounds
-		int midX = target.x;
-		midX = midX + maxDiff + 1 > map.size.x ? map.size.x - maxDiff - 1
-		                                       : (midX - maxDiff < 0 ? maxDiff : midX);
-		int midY = target.y;
-		midY = midY + maxDiff + 1 > map.size.y ? map.size.y - maxDiff - 1
-		                                       : (midY - maxDiff < 0 ? maxDiff : midY);
-		int midZ = (int)v.altitude;
-		midZ = midZ + maxDiff + 1 > map.size.z ? map.size.z - maxDiff - 1
-		                                       : (midZ - maxDiff < 0 ? maxDiff : midZ);
-
-		if (pickNearest)
-		{
-			Vec3<int> newTarget;
-			bool foundNewTarget = false;
-			for (int i = 0; i <= maxDiff && !foundNewTarget; i++)
-			{
-				for (int x = midX - i; x <= midX + i && !foundNewTarget; x++)
-				{
-					for (int y = midY - i; y <= midY + i && !foundNewTarget; y++)
-					{
-						for (int z = midZ - i; z <= midZ + i && !foundNewTarget; z++)
-						{
-							// Only pick points on the edge of each iteration
-							if (x == midX - i || x == midX + i || y == midY - i || y == midY + i ||
-							    z == midZ - i || z == midZ + i)
-							{
-								auto t = map.getTile(x, y, z);
-								if (t->ownedObjects.empty())
-								{
-									newTarget = t->position;
-									pickedNearest = true;
-									foundNewTarget = true;
-									break;
-								}
-							}
-						}
-					}
-				}
-			}
-			if (foundNewTarget)
-			{
-				LogWarning("Target %d,%d,%d was unreachable, found new closest target %d,%d,%d",
-				           target.x, target.y, target.z, newTarget.x, newTarget.y, newTarget.z);
-				target = newTarget;
-			}
-		}
-		else
-		{
-			std::list<Vec3<int>> sideStepLocations;
-
-			for (int x = midX - maxDiff; x <= midX + maxDiff; x++)
-			{
-				for (int y = midY - maxDiff; y <= midY + maxDiff; y++)
-				{
-					for (int z = midZ - maxDiff; z <= midZ + maxDiff; z++)
-					{
-						if (!map.tileIsValid(x, y, z))
-						{
-							continue;
-						}
-						auto t = map.getTile(x, y, z);
-						if (t->ownedObjects.empty())
-						{
-							sideStepLocations.push_back(t->position);
-						}
-					}
-				}
-			}
-			if (!sideStepLocations.empty())
-			{
-				auto newTarget = listRandomiser(state.rng, sideStepLocations);
-				LogWarning("Target %d,%d,%d was unreachable, found new random target %d,%d,%d",
-				           target.x, target.y, target.z, newTarget.x, newTarget.y, newTarget.z);
-				target = newTarget;
-			}
-		}
-	}
-	return true;
-}
-
-bool VehicleMission::adjustTargetToClosestFlying(GameState &state, Vehicle &v, Vec3<int> &target)
-{
-	bool pickedNearest = false;
-	return adjustTargetToClosestFlying(state, v, target, false, false, pickedNearest);
+	return Reachability::BlockedByScenery;
 }
 
 bool VehicleMission::takeOffCheck(GameState &state, Vehicle &v)
@@ -1222,6 +1258,7 @@ bool VehicleMission::getNextDestination(GameState &state, Vehicle &v, Vec3<float
 			return false;
 		}
 		case MissionType::GotoBuilding:
+		case MissionType::InvestigateBuilding:
 		{
 			if (v.currentBuilding != this->targetBuilding)
 			{
@@ -1300,6 +1337,14 @@ void VehicleMission::update(GameState &state, Vehicle &v, unsigned int ticks, bo
 				}
 				else // Port out
 				{
+					// Update score for UFO incursion
+					if (v.owner == state.getAliens() && v.city.id == "CITYMAP_HUMAN")
+					{
+						int incursionScore = -v.type->score / 4;
+						state.weekScore.incursions += incursionScore;
+						state.totalScore.incursions += incursionScore;
+					}
+
 					for (auto &city : state.cities)
 					{
 						if (city.second != v.city.getSp())
@@ -1358,8 +1403,15 @@ void VehicleMission::update(GameState &state, Vehicle &v, unsigned int ticks, bo
 		{
 			if (finished)
 			{
-				fw().pushEvent(new GameVehicleEvent(GameEventType::UfoCrashed,
-				                                    {&state, v.shared_from_this()}));
+				if (v.city.id == "CITYMAP_HUMAN")
+				{
+					fw().pushEvent(new GameVehicleEvent(GameEventType::UfoCrashed,
+					                                    {&state, v.shared_from_this()}));
+				}
+				else
+				{
+					v.die(state, false);
+				}
 				return;
 			}
 			auto vTile = v.tileObject;
@@ -1372,6 +1424,17 @@ void VehicleMission::update(GameState &state, Vehicle &v, unsigned int ticks, bo
 		}
 		case MissionType::GotoLocation:
 		case MissionType::Land:
+		{
+			return;
+		}
+		case MissionType::InvestigateBuilding:
+		{
+			if (finished && v.owner == state.getPlayer() && v.currentBuilding->detected)
+			{
+				v.currentBuilding->decreasePendingInvestigatorCount(state);
+			}
+			return;
+		}
 		case MissionType::InfiltrateSubvert:
 		case MissionType::GotoBuilding:
 		case MissionType::OfferService:
@@ -1404,7 +1467,7 @@ void VehicleMission::update(GameState &state, Vehicle &v, unsigned int ticks, bo
 			LogWarning("TODO: Implement update");
 			return;
 	}
-}
+} // namespace OpenApoc
 
 bool VehicleMission::isFinished(GameState &state, Vehicle &v, bool callUpdateIfFinished)
 {
@@ -1429,7 +1492,8 @@ bool VehicleMission::isFinishedInternal(GameState &state, Vehicle &v)
 	{
 		case MissionType::GotoLocation:
 		case MissionType::Crash:
-		// Note that GotoPortal/DepartToSpace never has planned path but still checks for target loc
+		// Note that GotoPortal/DepartToSpace never has planned path but still checks for target
+		// loc
 		case MissionType::DepartToSpace:
 		case MissionType::GotoPortal:
 		{
@@ -1493,6 +1557,7 @@ bool VehicleMission::isFinishedInternal(GameState &state, Vehicle &v)
 		case MissionType::Patrol:
 			return this->missionCounter == 0 && this->currentPlannedPath.empty();
 		case MissionType::GotoBuilding:
+		case MissionType::InvestigateBuilding:
 			return this->targetBuilding == v.currentBuilding;
 		case MissionType::SelfDestruct:
 		case MissionType::Snooze:
@@ -1501,7 +1566,7 @@ bool VehicleMission::isFinishedInternal(GameState &state, Vehicle &v)
 		case MissionType::Teleport:
 			return true;
 		case MissionType::AttackBuilding:
-			return targetBuilding && !targetBuilding->isAlive(state);
+			return targetBuilding && !targetBuilding->isAlive();
 		default:
 			LogWarning("TODO: Implement isFinishedInternal");
 			return false;
@@ -1591,7 +1656,9 @@ void VehicleMission::start(GameState &state, Vehicle &v)
 				LogError("Building disappeared");
 				return;
 			}
+
 			auto &map = *b->city->map;
+			unsigned snoozeTicks = TICKS_PER_SECOND / 2;
 			if (v.type->isGround())
 			{
 				// Looking for free exit
@@ -1602,12 +1669,14 @@ void VehicleMission::start(GameState &state, Vehicle &v)
 					if (!exitTile)
 					{
 						LogError("Invalid entrance location %s - outside map?", exitLocation.x);
+						snoozeTicks = TICKS_PER_HOUR / 2;
 						continue;
 					}
 					auto scenery = exitTile->presentScenery;
 					if (!scenery)
 					{
 						LogInfo("Tried exit %s - destroyed", exitLocation);
+						snoozeTicks = TICKS_PER_HOUR / 2;
 						continue;
 					}
 					bool exitIsBusy = false;
@@ -1615,6 +1684,13 @@ void VehicleMission::start(GameState &state, Vehicle &v)
 					{
 						if (obj->getType() == TileObject::Type::Vehicle)
 						{
+							auto v = std::static_pointer_cast<TileObjectVehicle>(obj)->getVehicle();
+							if (v->crashed)
+							{
+								// If the doors are blocked by crashed vehicle then need more time
+								// to solve the problem.
+								snoozeTicks = TICKS_PER_HOUR / 2;
+							}
 							exitIsBusy = true;
 							break;
 						}
@@ -1702,7 +1778,7 @@ void VehicleMission::start(GameState &state, Vehicle &v)
 				}
 			}
 			LogInfo("No free exit in building \"%s\" free - waiting", b.id);
-			v.addMission(state, snooze(state, v, TICKS_PER_SECOND / 2));
+			v.addMission(state, snooze(state, v, snoozeTicks));
 			return;
 		}
 		case MissionType::Land:
@@ -1978,6 +2054,7 @@ void VehicleMission::start(GameState &state, Vehicle &v)
 			setFollowPath(state, v);
 			return;
 		}
+		case MissionType::InvestigateBuilding:
 		case MissionType::GotoBuilding:
 		{
 			if (isFinishedInternal(state, v))
@@ -2153,39 +2230,7 @@ void VehicleMission::start(GameState &state, Vehicle &v)
 		}
 		case MissionType::RecoverVehicle:
 		{
-			// Ground can't recover
-			if (v.type->isGround())
-			{
-				cancelled = true;
-				return;
-			}
-			// Target not crashed or dead or already rescued
-			if (!targetVehicle ||
-			    (!targetVehicle->crashed && !targetVehicle->sliding && !targetVehicle->falling) ||
-			    targetVehicle->carriedByVehicle)
-			{
-				cancelled = true;
-				return;
-			}
-			// Can't rescue
-			if (targetVehicle->owner != state.getAliens() && !v.type->canRescueCrashed)
-			{
-				cancelled = true;
-				return;
-			}
-			// Find soldier
-			bool foundSoldier =
-			    v.owner == state.getPlayer() ||
-			    state.getPlayer()->isRelatedTo(v.owner) != Organisation::Relation::Hostile;
-			for (auto &a : v.currentAgents)
-			{
-				if (a->type->role == AgentType::Role::Soldier)
-				{
-					foundSoldier = true;
-					break;
-				}
-			}
-			if (!foundSoldier)
+			if (!targetVehicle || !VehicleMission::canRecoverVehicle(state, v, *targetVehicle))
 			{
 				cancelled = true;
 				return;
@@ -2196,8 +2241,7 @@ void VehicleMission::start(GameState &state, Vehicle &v)
 				case 0:
 				{
 					// Vehicle has crashed successfully and we're on top of it
-					if (targetVehicle->velocity.x == 0.0f && targetVehicle->velocity.y == 0.0f &&
-					    targetVehicle->velocity.z == 0.0f &&
+					if (targetVehicle->crashed &&
 					    (Vec3<int>)v.position == (Vec3<int>)targetVehicle->position)
 					{
 						missionCounter++;
@@ -2534,8 +2578,7 @@ void VehicleMission::start(GameState &state, Vehicle &v)
 			}
 			else
 			{
-				v.smokeDoodad = v.city->placeDoodad({&state, "DOODAD_13_SMOKE_FUME"},
-				                                    v.position + Vec3<float>{0.0f, 0.0f, 0.25f});
+				v.setCrashed(state);
 			}
 			return;
 		}
@@ -2554,92 +2597,92 @@ void VehicleMission::setPathTo(GameState &state, Vehicle &v, Vec3<int> target, i
 {
 	currentPlannedPath.clear();
 	auto vehicleTile = v.tileObject;
-	if (vehicleTile)
+	if (!vehicleTile)
 	{
-		// Ground vehicles want to go to a closer road
-		auto prevTarget = target;
-		if (v.type->type == VehicleType::Type::Road)
-		{
-			if (!adjustTargetToClosestRoad(v, target))
-			{
-				return;
-			}
-		}
-		// ATVs want to go to a closer ground
-		else if (v.type->type == VehicleType::Type::ATV)
-		{
-			if (!adjustTargetToClosestGround(v, target))
-			{
-				cancelled = true;
-				return;
-			}
-		}
-		else if (checkValidity)
-		{
-			adjustTargetToClosestFlying(state, v, target, false, pickNearest, pickedNearest);
-		}
-		if (giveUpIfInvalid && prevTarget != target)
+		LogError("Mission %s: Take off before pathfinding!", this->getName());
+		return;
+	}
+	const auto avoidance =
+	    pickNearest ? VehicleAvoidance::PickNearbyPoint : VehicleAvoidance::Sidestep;
+	auto adjustResult =
+	    VehicleTargetHelper::adjustTargetToClosest(state, v, target, avoidance, checkValidity);
+	if (!adjustResult.foundSuitableTarget)
+	{
+		cancelled = true;
+		return;
+	}
+	// If destination is permanently unreachable, either give up or decrease reRouteAttempts.
+	if (adjustResult.reachability == Reachability::BlockedByScenery)
+	{
+		if (giveUpIfInvalid)
 		{
 			cancelled = true;
 			return;
 		}
-
-		std::list<Vec3<int>> path;
-		float distance = 0.0f;
-		auto position = vehicleTile->getOwningTile()->position;
-		switch (v.type->type)
+		else if (reRouteAttempts > 0)
 		{
-			case VehicleType::Type::Road:
-				path = v.city->findShortestPath(position, target,
-				                                GroundVehicleTileHelper{*v.city->map, v});
-				distance = GroundVehicleTileHelper::getDistanceStatic(position, target);
-				break;
-			case VehicleType::Type::ATV:
-				path = v.city->map->findShortestPath(position, target, maxIterations,
-				                                     GroundVehicleTileHelper{*v.city->map, v});
-				distance = GroundVehicleTileHelper::getDistanceStatic(position, target);
-				break;
-			case VehicleType::Type::Flying:
-			case VehicleType::Type::UFO:
-				path = v.city->map->findShortestPath(position, target, maxIterations,
-				                                     FlyingVehicleTileHelper{*v.city->map, v});
-				distance = FlyingVehicleTileHelper::getDistanceStatic(position, target);
-				break;
+			reRouteAttempts--;
 		}
+	}
+	// If our vehicle avoidance strategy is to pick a nearby point, and if a nearby point was in
+	// fact picked, then allow the mission to finish upon reaching the nearby point.
+	if (adjustResult.reachability == Reachability::BlockedByVehicle &&
+	    avoidance == VehicleAvoidance::PickNearbyPoint)
+	{
+		pickedNearest = true;
+	}
 
-		// Did not reach destination
-		if (path.empty() || path.back() != target)
+	std::list<Vec3<int>> path;
+	float distance = 0.0f;
+	auto position = vehicleTile->getOwningTile()->position;
+	switch (v.type->type)
+	{
+		case VehicleType::Type::Road:
+			path = v.city->findShortestPath(position, target,
+			                                GroundVehicleTileHelper{*v.city->map, v});
+			distance = GroundVehicleTileHelper::getDistanceStatic(position, target);
+			break;
+		case VehicleType::Type::ATV:
+			path = v.city->map->findShortestPath(position, target, maxIterations,
+			                                     GroundVehicleTileHelper{*v.city->map, v});
+			distance = GroundVehicleTileHelper::getDistanceStatic(position, target);
+			break;
+		case VehicleType::Type::Flying:
+		case VehicleType::Type::UFO:
+			path = v.city->map->findShortestPath(position, target, maxIterations,
+			                                     FlyingVehicleTileHelper{*v.city->map, v});
+			distance = FlyingVehicleTileHelper::getDistanceStatic(position, target);
+			break;
+	}
+
+	// Did not reach destination
+	if (path.empty() || path.back() != target)
+	{
+		// If target was close enough to reach
+		if (maxIterations > (int)distance)
 		{
-			// If target was close enough to reach
-			if (maxIterations > (int)distance)
+			// If told to give up - cancel mission
+			if (giveUpIfInvalid)
 			{
-				// If told to give up - cancel mission
-				if (giveUpIfInvalid)
+				cancelled = true;
+				return;
+			}
+			// If not told to give up - subtract attempt
+			else
+			{
+				if (reRouteAttempts > 0)
 				{
-					cancelled = true;
-					return;
-				}
-				// If not told to give up - subtract attempt
-				else
-				{
-					if (reRouteAttempts > 0)
-					{
-						reRouteAttempts--;
-					}
+					reRouteAttempts--;
 				}
 			}
 		}
-
-		// Always start with the current position
-		this->currentPlannedPath.push_back(vehicleTile->getOwningTile()->position);
-		for (auto &p : path)
-		{
-			this->currentPlannedPath.push_back(p);
-		}
 	}
-	else
+
+	// Always start with the current position
+	this->currentPlannedPath.push_back(vehicleTile->getOwningTile()->position);
+	for (auto &p : path)
 	{
-		LogError("Mission %s: Take off before pathfinding!", this->getName());
+		this->currentPlannedPath.push_back(p);
 	}
 }
 
@@ -2737,7 +2780,7 @@ void VehicleMission::setFollowPath(GameState &state, Vehicle &v)
 }
 
 bool VehicleMission::advanceAlongPath(GameState &state, Vehicle &v, Vec3<float> &destPos,
-                                      float &destFacing, int &turboTiles)
+                                      float &destFacing [[maybe_unused]], int &turboTiles)
 {
 	if (currentPlannedPath.empty())
 	{
@@ -2807,9 +2850,9 @@ bool VehicleMission::advanceAlongPath(GameState &state, Vehicle &v, Vec3<float> 
 
 	// See if we can make a shortcut
 	{
-		// When ordering move to vehidle already on the move, we can have a situation
+		// When ordering move to vehicle already on the move, we can have a situation
 		// where going directly to 2nd step in the path is faster than going to the first
-		// In this case, we should skip unnesecary steps
+		// In this case, we should skip unnecessary steps
 		auto it = ++currentPlannedPath.begin();
 		// Start with position after next
 		// If next position has a node and we can go directly to that node
@@ -2824,15 +2867,13 @@ bool VehicleMission::advanceAlongPath(GameState &state, Vehicle &v, Vec3<float> 
 				                std::abs(tFrom->position.z - it->z) > 1;
 				if (v.type->isGround())
 				{
-					cantSkip = cantSkip ||
-					           !GroundVehicleTileHelper{tFrom->map, v}.canEnterTile(
-					               tFrom, tFrom->map.getTile(*it));
+					cantSkip = cantSkip || !GroundVehicleTileHelper{tFrom->map, v}.canEnterTile(
+					                           tFrom, tFrom->map.getTile(*it));
 				}
 				else
 				{
-					cantSkip = cantSkip ||
-					           !FlyingVehicleTileHelper{tFrom->map, v}.canEnterTile(
-					               tFrom, tFrom->map.getTile(*it));
+					cantSkip = cantSkip || !FlyingVehicleTileHelper{tFrom->map, v}.canEnterTile(
+					                           tFrom, tFrom->map.getTile(*it));
 				}
 				canSkip = canSkip || !cantSkip;
 			}
@@ -2941,7 +2982,7 @@ bool VehicleMission::acquireTargetBuilding(GameState &state, Vehicle &v)
 	std::list<StateRef<Building>> availableBuildings;
 	for (auto &b : v.city->buildings)
 	{
-		if (!b.second->isAlive(state))
+		if (!b.second->isAlive())
 		{
 			continue;
 		}
@@ -2954,7 +2995,7 @@ bool VehicleMission::acquireTargetBuilding(GameState &state, Vehicle &v)
 	}
 	if (!availableBuildings.empty())
 	{
-		targetBuilding = listRandomiser(state.rng, availableBuildings);
+		targetBuilding = pickRandom(state.rng, availableBuildings);
 	}
 
 	return (bool)targetBuilding;
@@ -2974,6 +3015,61 @@ void VehicleMission::takePositionNearPortal(GameState &state, Vehicle &v)
 	std::uniform_int_distribution<int> yPos((int)v.position.y - 2, (int)v.position.y + 2);
 	v.addMission(state, VehicleMission::gotoLocation(
 	                        state, v, v.getPreferredPosition(xPos(state.rng), yPos(state.rng))));
+}
+
+bool VehicleMission::canRecoverVehicle(const GameState &state, const Vehicle &v,
+                                       const Vehicle &target)
+{
+	// Ground can't recover
+	if (v.type->isGround())
+	{
+		return false;
+	}
+	// Target not crashed or dead or already rescued
+	if (target.isDead() || (!target.crashed && !target.sliding && !target.falling) ||
+	    target.carriedByVehicle)
+	{
+		return false;
+	}
+	// Only X-Com pursues sliding or falling crafts
+	if (!target.crashed && v.owner != state.getPlayer())
+	{
+		return false;
+	}
+	// Can't rescue
+	if (target.owner != state.getAliens() && !v.type->canRescueCrashed)
+	{
+		return false;
+	}
+	// Only X-Com can storm UFO
+	if (target.owner == state.getAliens() && v.owner != state.getPlayer())
+	{
+		return false;
+	}
+	// Find soldier
+	bool needSoldiersButNotFound =
+	    v.owner == state.getPlayer() ||
+	    v.owner->isRelatedTo(target.owner) == Organisation::Relation::Hostile;
+	for (const auto &a : v.currentAgents)
+	{
+		if (a->type->role == AgentType::Role::Soldier)
+		{
+			needSoldiersButNotFound = false;
+			break;
+		}
+	}
+	if (needSoldiersButNotFound)
+	{
+		return false;
+	}
+	// Don't attempt to rescue permanently unreachable craft
+	if (VehicleTargetHelper::isReachableTarget(v, target.position) ==
+	    Reachability::BlockedByScenery)
+	{
+		return false;
+	}
+
+	return true;
 }
 
 UString VehicleMission::getName()
@@ -2998,6 +3094,7 @@ UString VehicleMission::getName()
 	    {MissionType::RestartNextMission, "RestartNextMission"},
 	    {MissionType::OfferService, "OfferServices"},
 	    {MissionType::Teleport, "Teleport"},
+	    {MissionType::InvestigateBuilding, "InvestigateBuilding"},
 	};
 	UString name = "UNKNOWN";
 	const auto it = TypeMap.find(this->type);
@@ -3022,6 +3119,7 @@ UString VehicleMission::getName()
 		case MissionType::AttackBuilding:
 		case MissionType::TakeOff:
 		case MissionType::Land:
+		case MissionType::InvestigateBuilding:
 			name += " " + this->targetBuilding.id;
 			break;
 		case MissionType::ArriveFromDimensionGate:
@@ -3034,16 +3132,20 @@ UString VehicleMission::getName()
 			break;
 		case MissionType::RestartNextMission:
 			break;
+		case MissionType::OfferService:
+			name += format(" counter: %u, target %s", missionCounter,
+			               targetBuilding ? targetBuilding->name : "null");
+			break;
 	}
 	return name;
 }
 
 GroundVehicleTileHelper::GroundVehicleTileHelper(TileMap &map, Vehicle &v)
-    : GroundVehicleTileHelper(map, v.type->type, v.crashed)
+    : GroundVehicleTileHelper(map, v.type->type)
 {
 }
-GroundVehicleTileHelper::GroundVehicleTileHelper(TileMap &map, VehicleType::Type type, bool crashed)
-    : map(map), type(type), crashed(crashed)
+GroundVehicleTileHelper::GroundVehicleTileHelper(TileMap &map, VehicleType::Type type)
+    : map(map), type(type)
 {
 }
 
@@ -3330,10 +3432,12 @@ float GroundVehicleTileHelper::getDistanceStatic(Vec3<float> from, Vec3<float> t
 {
 	auto diffStart = toStart - from;
 	auto diffEnd = toEnd - from - Vec3<float>{1.0f, 1.0f, 1.0f};
-	auto xDiff = from.x >= toStart.x && from.x < toEnd.x ? 0.0f : std::min(std::abs(diffStart.x),
-	                                                                       std::abs(diffEnd.x));
-	auto yDiff = from.y >= toStart.y && from.y < toEnd.y ? 0.0f : std::min(std::abs(diffStart.y),
-	                                                                       std::abs(diffEnd.y));
+	auto xDiff = from.x >= toStart.x && from.x < toEnd.x
+	                 ? 0.0f
+	                 : std::min(std::abs(diffStart.x), std::abs(diffEnd.x));
+	auto yDiff = from.y >= toStart.y && from.y < toEnd.y
+	                 ? 0.0f
+	                 : std::min(std::abs(diffStart.y), std::abs(diffEnd.y));
 	return xDiff + yDiff;
 }
 

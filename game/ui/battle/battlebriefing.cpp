@@ -30,9 +30,9 @@ static const std::map<UString, int> alienFunctionMap = {
 };
 }
 
-BattleBriefing::BattleBriefing(sp<GameState> state, StateRef<Organisation> targetOrg,
-                               UString location, bool isBuilding, bool isRaid,
-                               std::shared_future<void> gameStateTask)
+BattleBriefing::BattleBriefing(sp<GameState> state,
+                               StateRef<Organisation> targetOrg [[maybe_unused]], UString location,
+                               bool isBuilding, bool isRaid, std::shared_future<void> gameStateTask)
     : Stage(), menuform(ui().getForm("battle/briefing")), loading_task(std::move(gameStateTask)),
       state(state)
 {
@@ -142,14 +142,14 @@ BattleBriefing::BattleBriefing(sp<GameState> state, StateRef<Organisation> targe
 		    this->state->current_battle->setMode(Battle::Mode::RealTime);
 		    fw().stageQueueCommand(
 		        {StageCmd::Command::REPLACEALL, mksp<BattlePreStart>(this->state)});
-		});
+	    });
 
 	menuform->findControlTyped<GraphicButton>("BUTTON_TURN_BASED")
 	    ->addCallback(FormEventType::ButtonClick, [this](Event *) {
 		    this->state->current_battle->setMode(Battle::Mode::TurnBased);
 		    fw().stageQueueCommand(
 		        {StageCmd::Command::REPLACEALL, mksp<BattlePreStart>(this->state)});
-		});
+	    });
 }
 
 void BattleBriefing::begin() {}
@@ -165,7 +165,7 @@ void BattleBriefing::eventOccurred(Event *e)
 	menuform->eventOccured(e);
 	if (e->type() == EVENT_KEY_DOWN)
 	{
-		if (e->keyboard().KeyCode == SDLK_RETURN)
+		if (e->keyboard().KeyCode == SDLK_RETURN || e->keyboard().KeyCode == SDLK_KP_ENTER)
 		{
 			menuform->findControl("BUTTON_REAL_TIME")->click();
 			return;

@@ -26,7 +26,7 @@ NotificationScreen::NotificationScreen(sp<GameState> state, CityView &cityView,
 		    cityView.zoomLastEvent();
 		    cityView.setUpdateSpeed(CityUpdateSpeed::Pause);
 		    fw().stageQueueCommand({StageCmd::Command::POP});
-		});
+	    });
 }
 
 NotificationScreen::NotificationScreen(sp<GameState> state, BattleView &battleView,
@@ -40,7 +40,7 @@ NotificationScreen::NotificationScreen(sp<GameState> state, BattleView &battleVi
 		    battleView.zoomLastEvent();
 		    battleView.setUpdateSpeed(BattleUpdateSpeed::Pause);
 		    fw().stageQueueCommand({StageCmd::Command::POP});
-		});
+	    });
 }
 
 NotificationScreen::~NotificationScreen() = default;
@@ -90,7 +90,7 @@ void NotificationScreen::eventOccurred(Event *e)
 			menuform->findControl("CHECKBOX_ALWAYS_PAUSE")->click();
 			return;
 		}
-		if (e->keyboard().KeyCode == SDLK_RETURN)
+		if (e->keyboard().KeyCode == SDLK_RETURN || e->keyboard().KeyCode == SDLK_KP_ENTER)
 		{
 			menuform->findControl("BUTTON_PAUSE")->click();
 			return;

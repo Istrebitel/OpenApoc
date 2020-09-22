@@ -43,6 +43,7 @@ void InitialGameStateExtractor::extractOrganisations(GameState &state) const
 		o->income = odata.starting_funding;
 		o->tech_level = odata.starting_tech_level + 1;
 		o->average_guards = odata.average_guards;
+		o->rebuildingRate = odata.rebuilding_rate;
 
 		// "Civilian" organisation has no loot entry and icon
 		if (i == ORG_CIVILIAN)
@@ -120,7 +121,7 @@ void InitialGameStateExtractor::extractOrganisations(GameState &state) const
 			o->current_relations[o2] = (float)rdata.relationships[j];
 		}
 
-		// Done in copmmon xml patch
+		// Done in common xml patch
 		/*if (i == ORG_CIVILIAN)
 		{
 		    o->hirableAgentTypes[{&state, "AGENTTYPE_X-COM_QUANTUM_PHYSICIST"}] = {0,2};
@@ -150,7 +151,7 @@ void InitialGameStateExtractor::extractOrganisations(GameState &state) const
 			// Vehicle park
 			switch (vdata.vehiclePark)
 			{
-				// No combat vehice park
+				// No combat vehicle park
 				case 0:
 					break;
 				// Nutrivend, SuperDynamics, GeneralMetro

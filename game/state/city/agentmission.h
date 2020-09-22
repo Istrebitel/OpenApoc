@@ -17,7 +17,6 @@ class Agent;
 class Tile;
 class TileMap;
 class Building;
-class UString;
 class SceneryTileType;
 class City;
 
@@ -76,6 +75,8 @@ class AgentMission
 	static AgentMission *snooze(GameState &state, Agent &a, unsigned int ticks);
 	static AgentMission *restartNextMission(GameState &state, Agent &a);
 	static AgentMission *teleport(GameState &state, Agent &a, StateRef<Building> b);
+	static AgentMission *investigateBuilding(GameState &state, Agent &a, StateRef<Building> target,
+	                                         bool allowTeleporter = false, bool allowTaxi = false);
 	UString getName();
 
 	enum class MissionType
@@ -84,7 +85,8 @@ class AgentMission
 		AwaitPickup,
 		RestartNextMission,
 		Snooze,
-		Teleport
+		Teleport,
+		InvestigateBuilding,
 	};
 
 	MissionType type = MissionType::GotoBuilding;

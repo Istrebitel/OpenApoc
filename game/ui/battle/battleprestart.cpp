@@ -16,6 +16,7 @@
 #include "game/state/shared/agent.h"
 #include "game/ui/components/controlgenerator.h"
 #include "game/ui/general/aequipscreen.h"
+#include "game/ui/general/agentsheet.h"
 #include "game/ui/general/loadingscreen.h"
 #include "game/ui/tileview/battleview.h"
 #include <cmath>
@@ -33,25 +34,14 @@ std::shared_future<void> enterBattle(sp<GameState> state)
 
 void BattlePreStart::displayAgent(sp<Agent> agent)
 {
-	bool visible = agent ? true : false;
-	menuform->findControlTyped<Label>("LABEL_HEALTH")->setVisible(visible);
-	menuform->findControlTyped<Label>("LABEL_ACCURACY")->setVisible(visible);
-	menuform->findControlTyped<Label>("LABEL_REACTIONS")->setVisible(visible);
-	menuform->findControlTyped<Label>("LABEL_SPEED")->setVisible(visible);
-	menuform->findControlTyped<Label>("LABEL_STAMINA")->setVisible(visible);
-	menuform->findControlTyped<Label>("LABEL_BRAVERY")->setVisible(visible);
-	menuform->findControlTyped<Label>("LABEL_STRENGTH")->setVisible(visible);
-	menuform->findControlTyped<Label>("LABEL_PSI-ENERGY")->setVisible(visible);
-	menuform->findControlTyped<Label>("LABEL_PSI-ATTACK")->setVisible(visible);
-	menuform->findControlTyped<Label>("LABEL_PSI-DEFENCE")->setVisible(visible);
-
-	if (!visible)
+	if (!agent)
 	{
 		return;
 	}
 
-	AEquipScreen::outputAgent(agent, menuform, bigUnitRanks,
-	                          state->current_battle->mode == Battle::Mode::TurnBased);
+	AgentSheet(formAgentStats)
+	    .display(*agent, bigUnitRanks, state->current_battle->mode == Battle::Mode::TurnBased);
+	formAgentStats->setVisible(true);
 
 	auto rHand = agent->getFirstItemInSlot(EquipmentSlotType::RightHand);
 	auto lHand = agent->getFirstItemInSlot(EquipmentSlotType::LeftHand);
@@ -61,25 +51,25 @@ void BattlePreStart::displayAgent(sp<Agent> agent)
 	    ->setImage(lHand ? lHand->type->equipscreen_sprite : nullptr);
 }
 BattlePreStart::BattlePreStart(sp<GameState> state)
-    : Stage(), menuform(ui().getForm("battle/prestart")), TOP_LEFT({302, 80}), state(state)
+    : Stage(), TOP_LEFT({302, 80}), menuform(ui().getForm("battle/prestart")), state(state)
 {
 
 	menuform->findControlTyped<GraphicButton>("BUTTON_EQUIP")
-	    ->addCallback(FormEventType::ButtonClick, [this, state](Event *) {
-
+	    ->addCallback(FormEventType::ButtonClick, [state](Event *) {
 		    fw().stageQueueCommand({StageCmd::Command::PUSH, mksp<AEquipScreen>(state)});
-		});
+	    });
+	formAgentStats = menuform->findControlTyped<Form>("AGENT_STATS_VIEW");
+	formAgentStats->setVisible(false);
 	menuform->findControlTyped<GraphicButton>("BUTTON_OK")
 	    ->addCallback(FormEventType::ButtonClick, [this, state](Event *) {
-
 		    auto gameState = this->state;
 
-		    fw().stageQueueCommand(
-		        {StageCmd::Command::PUSH,
-		         mksp<LoadingScreen>(gameState, enterBattle(gameState),
-		                             [gameState]() { return mksp<BattleView>(gameState); },
-		                             this->state->battle_common_image_list->loadingImage, 1)});
-		});
+		    fw().stageQueueCommand({StageCmd::Command::PUSH,
+		                            mksp<LoadingScreen>(
+		                                gameState, enterBattle(gameState),
+		                                [gameState]() { return mksp<BattleView>(gameState); },
+		                                this->state->battle_common_image_list->loadingImage, 1)});
+	    });
 
 	for (int i = 12; i <= 18; i++)
 	{
@@ -109,11 +99,12 @@ void BattlePreStart::updateAgents()
 		{
 			continue;
 		}
-		agents.insert(mksp<AgentIcon>(
-		    u.second->agent, ControlGenerator::createAgentControl(*state, u.second->agent,
-		                                                          UnitSelectionState::Unselected),
-		    ControlGenerator::createAgentControl(*state, u.second->agent,
-		                                         UnitSelectionState::FirstSelected)));
+		agents.insert(
+		    mksp<AgentIcon>(u.second->agent,
+		                    ControlGenerator::createAgentControl(*state, u.second->agent,
+		                                                         UnitSelectionState::Unselected),
+		                    ControlGenerator::createAgentControl(
+		                        *state, u.second->agent, UnitSelectionState::FirstSelected)));
 	}
 
 	// Position agent controls
@@ -155,7 +146,8 @@ void BattlePreStart::eventOccurred(Event *e)
 	menuform->eventOccured(e);
 	if (e->type() == EVENT_KEY_DOWN)
 	{
-		if (e->keyboard().KeyCode == SDLK_RETURN || e->keyboard().KeyCode == SDLK_ESCAPE)
+		if (e->keyboard().KeyCode == SDLK_RETURN || e->keyboard().KeyCode == SDLK_ESCAPE ||
+		    e->keyboard().KeyCode == SDLK_KP_ENTER)
 		{
 			menuform->findControl("BUTTON_OK")->click();
 			return;
@@ -214,7 +206,7 @@ void BattlePreStart::eventOccurred(Event *e)
 		else
 		{
 			int newSquad = -1;
-			for (int i = 0; i < 5; i++)
+			for (int i = 0; i < 6; i++)
 			{
 				if (mousePos.x >= TOP_LEFT.x - ROW_HEADER && mousePos.x < TOP_LEFT.x + ROW_WIDTH &&
 				    mousePos.y >= TOP_LEFT.y + i * SHIFT_Y &&

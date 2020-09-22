@@ -2,7 +2,6 @@
 #include "framework/configfile.h"
 #include "framework/framework.h"
 #include "framework/sound.h"
-#include "framework/trace.h"
 #include "game/state/battle/ai/aitype.h"
 #include "game/state/battle/battledoor.h"
 #include "game/state/battle/battleexplosion.h"
@@ -63,7 +62,6 @@ static std::vector<std::set<TileObject::Type>> layerMap = {
 
 Battle::~Battle()
 {
-	TRACE_FN;
 	// Note due to backrefs to Tile*s etc. we need to destroy all tile objects
 	// before the TileMap
 	if (map)
@@ -134,7 +132,7 @@ void Battle::initBattle(GameState &state, bool first)
 		o.second->psiSuccessSounds = state.battle_common_sample_list->psiSuccessSounds;
 		o.second->psiFailSounds = state.battle_common_sample_list->psiFailSounds;
 	}
-	if (forces.size() == 0)
+	if (forces.empty())
 	{
 		// Init forces and fill squads with nullptrs so that we have where to place units
 		for (auto &o : this->participants)
@@ -209,7 +207,7 @@ void Battle::initBattle(GameState &state, bool first)
 		h->updateTileVisionBlock(state);
 	}
 
-	// On first run, init support links and items, do vsibility and pathfinding, reset AI
+	// On first run, init support links and items, do visibility and pathfinding, reset AI
 	if (!first)
 	{
 		return;
@@ -720,7 +718,7 @@ void Battle::initialUnitSpawn(GameState &state)
 		{
 			continue;
 		}
-		auto pos = listRandomiser(state.rng, spawnLocations[u.second->agent->type]);
+		auto pos = pickRandom(state.rng, spawnLocations[u.second->agent->type]);
 		spawnLocations[u.second->agent->type].remove(pos);
 		auto tile = map->getTile(pos.x, pos.y, pos.z);
 		u.second->position = tile->getRestingPosition(u.second->isLarge());
@@ -885,7 +883,7 @@ void Battle::initialUnitSpawn(GameState &state)
 				{
 					if (l->size() == 0)
 						continue;
-					block = listRandomiser(state.rng, *l);
+					block = pickRandom(state.rng, *l);
 					if (block)
 						break;
 				}
@@ -911,13 +909,13 @@ void Battle::initialUnitSpawn(GameState &state)
 								}
 								u->position = tile->getRestingPosition(u->isLarge());
 								unitsToSpawn.pop_back();
-								if (unitsToSpawn.size() == 0)
+								if (unitsToSpawn.empty())
 									break;
 							}
-							if (unitsToSpawn.size() == 0)
+							if (unitsToSpawn.empty())
 								break;
 						}
-						if (unitsToSpawn.size() == 0)
+						if (unitsToSpawn.empty())
 							break;
 					}
 
@@ -933,7 +931,7 @@ void Battle::initialUnitSpawn(GameState &state)
 				int numSpawned = 0;
 				if (!block->positions[needWalker].empty())
 				{
-					auto spawnPos = setRandomiser(state.rng, block->positions[needWalker]);
+					auto spawnPos = pickRandom(state.rng, block->positions[needWalker]);
 					int z = spawnPos.z;
 					int offset = 0;
 					bool stopSpawning = false;
@@ -1004,7 +1002,7 @@ void Battle::initialUnitSpawn(GameState &state)
 								*/
 								unitsToSpawn.pop_back();
 								numSpawned++;
-								if (unitsToSpawn.size() == 0
+								if (unitsToSpawn.empty()
 								    // This makes us spawn every civilian and loner individually
 								    // Except X-Com scientists
 								    || (numSpawned > 0 && !requestCivilian &&
@@ -1095,18 +1093,26 @@ void Battle::initialUnitSpawn(GameState &state)
 		// Facing
 		if (!u->agent->isFacingAllowed(u->facing))
 		{
-			u->facing = setRandomizer(state.rng, *u->agent->getAllowedFacings());
+			u->facing = pickRandom(state.rng, *u->agent->getAllowedFacings());
 		}
 		// Stance
 		u->setBodyState(state, u->agent->type->bodyType->getFirstAllowedState());
-		if (u->current_body_state == BodyState::Kneeling ||
-		    u->current_body_state == BodyState::Prone)
+		if (config().getBool("OpenApoc.NewFeature.RunAndKneel") && u->owner == state.getPlayer())
 		{
-			u->setMovementMode(MovementMode::Prone);
+			u->setKneelingMode(KneelingMode::Kneeling);
+			u->setMovementMode(MovementMode::Running);
 		}
 		else
 		{
-			u->setMovementMode(MovementMode::Walking);
+			if (u->current_body_state == BodyState::Kneeling ||
+			    u->current_body_state == BodyState::Prone)
+			{
+				u->setMovementMode(MovementMode::Prone);
+			}
+			else
+			{
+				u->setMovementMode(MovementMode::Walking);
+			}
 		}
 		// Miscellaneous
 		u->beginTurn(state);
@@ -1148,7 +1154,7 @@ sp<BattleUnit> Battle::spawnUnit(GameState &state, StateRef<Organisation> owner,
 		else
 		{
 			facing =
-			    setRandomizer(state.rng, agentType->bodyType->allowed_facing.at(agent->appearance));
+			    pickRandom(state.rng, agentType->bodyType->allowed_facing.at(agent->appearance));
 		}
 	}
 	unit->setFacing(state, facing);
@@ -1182,8 +1188,7 @@ sp<BattleExplosion> Battle::addExplosion(GameState &state, Vec3<int> position,
 	// Sound
 	if (!damageType->explosionSounds.empty())
 	{
-		fw().soundBackend->playSample(listRandomiser(state.rng, damageType->explosionSounds),
-		                              position);
+		fw().soundBackend->playSample(pickRandom(state.rng, damageType->explosionSounds), position);
 	}
 
 	// Explosion
@@ -1319,7 +1324,7 @@ sp<BattleHazard> Battle::placeHazard(GameState &state, StateRef<Organisation> ow
 					LogWarning(
 					    "Ensure we are not putting out a fire that is attached to a feature!");
 				}
-				existingHazard->die(state, false);
+				existingHazard->dieAndRemove(state, false);
 			}
 		}
 		map->addObjectToMap(hazard);
@@ -1617,7 +1622,6 @@ void Battle::updatePathfinding(GameState &, unsigned int ticks)
 
 void Battle::update(GameState &state, unsigned int ticks)
 {
-	TRACE_FN_ARGS1("ticks", Strings::fromInteger(static_cast<int>(ticks)));
 
 	if (missionEndTimer > 0)
 	{
@@ -1632,75 +1636,54 @@ void Battle::update(GameState &state, unsigned int ticks)
 	{
 		case Mode::TurnBased:
 		{
-			Trace::start("Battle::updateTB");
 			updateTB(state);
-			Trace::end("Battle::updateTB");
 			break;
 		}
 		case Mode::RealTime:
 		{
-			Trace::start("Battle::updateRT");
 			updateRT(state, ticks);
-			Trace::end("Battle::updateRT");
 			break;
 		}
 	}
-	Trace::start("Battle::update::projectiles->update");
 	updateProjectiles(state, ticks);
-	Trace::end("Battle::update::projectiles->update");
-	Trace::start("Battle::update::doors->update");
 	for (auto &o : this->doors)
 	{
 		o.second->update(state, ticks);
 	}
-	Trace::end("Battle::update::doors->update");
-	Trace::start("Battle::update::doodads->update");
 	for (auto it = this->doodads.begin(); it != this->doodads.end();)
 	{
 		auto d = *it++;
 		d->update(state, ticks);
 	}
-	Trace::end("Battle::update::doodads->update");
-	Trace::start("Battle::update::hazards->update");
 	for (auto it = this->hazards.begin(); it != this->hazards.end();)
 	{
-		auto d = *it++;
-		d->update(state, ticks);
+		if ((*it)->update(state, ticks))
+			it = hazards.erase(it);
+		else
+			++it;
 	}
-	Trace::end("Battle::update::hazards->update");
-	Trace::start("Battle::update::explosions->update");
 	for (auto it = this->explosions.begin(); it != this->explosions.end();)
 	{
 		auto d = *it++;
 		d->update(state, ticks);
 	}
-	Trace::end("Battle::update::explosions->update");
-	Trace::start("Battle::update::map_parts->update");
 	for (auto &o : this->map_parts)
 	{
 		o->update(state, ticks);
 	}
-	Trace::end("Battle::update::map_parts->update");
-	Trace::start("Battle::update::items->update");
 	for (auto it = this->items.begin(); it != this->items.end();)
 	{
 		auto p = *it++;
 		p->update(state, ticks);
 	}
-	Trace::end("Battle::update::items->update");
-	Trace::start("Battle::update::scanners->update");
 	for (auto &o : this->scanners)
 	{
 		o.second->update(state, ticks);
 	}
-	Trace::end("Battle::update::scanners->update");
-	Trace::start("Battle::update::units->update");
 	for (auto &o : this->units)
 	{
 		o.second->update(state, ticks);
 	}
-	Trace::end("Battle::update::units->update");
-	Trace::start("Battle::update::ai->think");
 	{
 		auto result = aiBlock.think(state);
 		for (auto &entry : result)
@@ -1708,17 +1691,12 @@ void Battle::update(GameState &state, unsigned int ticks)
 			BattleUnit::executeGroupAIDecision(state, entry.second, entry.first);
 		}
 	}
-	Trace::end("Battle::update::ai->think");
 
 	// Now after we called update() for everything, we update what needs to be updated last
 
 	// Update unit vision for units that see changes in terrain or hazards
-	Trace::start("Battle::update::vision");
 	updateVision(state);
-	Trace::end("Battle::update::vision");
-	Trace::start("Battle::update::pathfinding");
 	updatePathfinding(state, ticks);
-	Trace::end("Battle::update::pathfinding");
 }
 
 void Battle::updateTB(GameState &state)
@@ -1821,7 +1799,6 @@ void Battle::updateTBBegin(GameState &state)
 		}
 	}
 
-	Trace::start("Battle::updateTBBegin::units->update");
 	for (auto &o : this->units)
 	{
 		if (o.second->owner == currentActiveOrganisation)
@@ -1829,22 +1806,17 @@ void Battle::updateTBBegin(GameState &state)
 			o.second->updateTB(state);
 		}
 	}
-	Trace::end("Battle::updateTBBegin::units->update");
 }
 
 void Battle::updateTBEnd(GameState &state)
 {
-	Trace::start("Battle::updateTBEnd::hazards->update");
 	for (auto it = this->hazards.begin(); it != this->hazards.end();)
 	{
-		auto d = *it++;
-		if (d->ownerOrganisation == currentActiveOrganisation)
-		{
-			d->updateTB(state);
-		}
+		if ((*it)->ownerOrganisation == currentActiveOrganisation && (*it)->updateTB(state))
+			it = hazards.erase(it);
+		else
+			++it;
 	}
-	Trace::end("Battle::updateTBEnd::hazards->update");
-	Trace::start("Battle::updateTBEnd::items->update");
 	for (auto it = this->items.begin(); it != this->items.end();)
 	{
 		auto p = *it++;
@@ -1853,7 +1825,6 @@ void Battle::updateTBEnd(GameState &state)
 			p->updateTB(state);
 		}
 	}
-	Trace::end("Battle::updateTBEnd::items->update");
 }
 
 int Battle::getLosBlockID(int x, int y, int z) const
@@ -2005,8 +1976,30 @@ void Battle::checkMissionEnd(GameState &state, bool retreated, bool forceReCheck
 		{
 			if (u.second->owner == p && u.second->isConscious())
 			{
-				orgsAlive.insert(p);
-				break;
+				bool normalUnit = false;
+				for (auto &mst : u.second->agent->type->bodyType->allowed_movement_states)
+				{
+					switch (mst)
+					{
+						case OpenApoc::MovementState::Normal:
+						case OpenApoc::MovementState::Running:
+						case OpenApoc::MovementState::Strafing:
+						case OpenApoc::MovementState::Reverse:
+						case OpenApoc::MovementState::Brainsuck:
+							normalUnit = true;
+							break;
+						default:
+							break;
+					}
+					if (normalUnit)
+						break;
+				}
+
+				if (normalUnit)
+				{
+					orgsAlive.insert(p);
+					break;
+				}
 			}
 		}
 	}
@@ -2034,7 +2027,7 @@ void Battle::checkMissionEnd(GameState &state, bool retreated, bool forceReCheck
 	}
 }
 
-void Battle::checkIfBuildingDisabled(GameState &state)
+void Battle::checkIfBuildingDisabled(GameState &state [[maybe_unused]])
 {
 	if (!buildingCanBeDisabled || buildingDisabled || !tryDisableBuilding())
 	{
@@ -2147,12 +2140,12 @@ void Battle::spawnReinforcements(GameState &state)
 	{
 		return;
 	}
-	// FIXME: Proper spawning algorightm for reinforcements, for now spawn 4 randoms
+	// FIXME: Proper spawning algorithm for reinforcements, for now spawn 4 randoms
 	for (int i = 0; i < 4; i++)
 	{
-		auto pos = setRandomiser(state.rng, reinforcementLocations);
+		auto pos = pickRandom(state.rng, reinforcementLocations);
 		reinforcementLocations.erase(pos);
-		auto type = listRandomiser(state.rng, locationOwner->guard_types_reinforcements);
+		auto type = pickRandom(state.rng, locationOwner->guard_types_reinforcements);
 		auto u = state.current_battle->spawnUnit(state, locationOwner, type,
 		                                         {pos.x + 0.5f, pos.y + 0.5f, pos.z + 0.1f}, {0, 0},
 		                                         type->bodyType->getFirstAllowedState());
@@ -2374,7 +2367,7 @@ void Battle::giveInterruptChanceToUnit(GameState &state, StateRef<BattleUnit> gi
                                        StateRef<BattleUnit> receiver, int reactionValue)
 {
 	if (mode != Mode::TurnBased || receiver->owner == currentActiveOrganisation ||
-	    receiver->getAIType() == AIType::None ||
+	    receiver->getAIType() == AIType::None || receiver->getAIType() == AIType::Civilian ||
 	    interruptQueue.find(receiver) != interruptQueue.end())
 	{
 		return;
@@ -2524,16 +2517,17 @@ void Battle::finishBattle(GameState &state)
 	auto aliens = state.getAliens();
 	state.current_battle->unloadResources(state);
 
-	// Remove active battle scanners
+	// Remove active battle scanners and deactivate medikits and motion scanners
 	for (auto &u : state.current_battle->units)
 	{
 		for (auto &e : u.second->agent->equipment)
 		{
 			e->battleScanner.clear();
+			e->inUse = false;
 		}
 	}
 
-	// Proces MCed units
+	// Process MCed units
 	for (auto &u : state.current_battle->units)
 	{
 		if (u.second->owner != u.second->agent->owner)
@@ -2622,11 +2616,19 @@ void Battle::finishBattle(GameState &state)
 			}
 			loot.push_back(e);
 		}
-		// Send home if not on vehicle
-		if (!u.second->agent->currentVehicle && !state.current_battle->skirmish)
+		// Send home if not on vehicle. Note that some units may not have a home building
+		if (!u.second->agent->currentVehicle && !state.current_battle->skirmish &&
+		    u.second->agent->homeBuilding != nullptr)
 		{
 			u.second->agent->setMission(state, AgentMission::gotoBuilding(state, *u.second->agent));
 		}
+	}
+
+	// If mission == Alien extermination, remove the red alien spotted circle
+	if (state.current_battle->mission_type == Battle::MissionType::AlienExtermination)
+	{
+		StateRef<Building> location = {&state, state.current_battle->mission_location_id};
+		location->detected = false;
 	}
 
 	// If player won and didn't retreat, player secures the area
@@ -2666,7 +2668,7 @@ void Battle::finishBattle(GameState &state)
 		// Dead alien loot
 		for (auto &u : deadAliens)
 		{
-			if (u->agent->type->deadSpeciesItem)
+			if (u->agent->type->deadSpeciesItem && !u->destroyed)
 			{
 				if (u->agent->type->deadSpeciesItem->bioStorage)
 				{
@@ -2796,7 +2798,7 @@ void Battle::finishBattle(GameState &state)
 	std::list<sp<BattleUnit>> unitsToRemove;
 	for (auto &u : state.current_battle->units)
 	{
-		if (u.second->owner != player || u.second->isDead())
+		if (u.second->owner != player || u.second->isDead() || u.second->agent->destroyAfterBattle)
 		{
 			unitsToRemove.push_back(u.second);
 		}
@@ -2930,13 +2932,13 @@ void Battle::exitBattle(GameState &state)
 		}
 
 		// Erase base and building
-		StateRef<Base> fakeBase = {&state, "SKIRMISH_BASE"};
+		StateRef<Base> fakeBase = {&state, "BASE_SKIRMISH"};
 		auto city = fakeBase->building->city;
 		fakeBase->building->currentAgents.clear();
 		fakeBase->building->base.clear();
 		fakeBase->building.clear();
-		city->buildings.erase("SKIRMISH_BUILDING");
-		state.player_bases.erase("SKIRMISH_BASE");
+		city->buildings.erase("BUILDING_SKIRMISH");
+		state.player_bases.erase("BASE_SKIRMISH");
 
 		// Erase vehicle
 		if (state.current_battle->player_craft)
@@ -2989,7 +2991,6 @@ void Battle::exitBattle(GameState &state)
 	{
 		if (state.current_battle->mission_type == Battle::MissionType::UfoRecovery)
 		{
-			Vec2<int> battleLocation;
 			StateRef<City> city;
 			StateRef<Vehicle> location = {&state, state.current_battle->mission_location_id};
 			city = location->city;
@@ -2997,7 +2998,8 @@ void Battle::exitBattle(GameState &state)
 			for (auto &v : state.vehicles)
 			{
 				// Check every player owned vehicle located in city
-				if (v.second->owner != player || v.second->city != city || v.second->currentBuilding
+				if (v.second->owner != player || v.second->city != city ||
+				    v.second->currentBuilding
 				    // Player's vehicle was already added and has priority
 				    || v.first == state.current_battle->player_craft.id)
 				{
@@ -3104,7 +3106,7 @@ void Battle::exitBattle(GameState &state)
 		{
 			if (state.current_battle->mission_type == Battle::MissionType::UfoRecovery)
 			{
-				// Still cant't do anything if we're recovering UFO
+				// Still can't do anything if we're recovering UFO
 			}
 			else
 			{
@@ -3150,11 +3152,10 @@ void Battle::exitBattle(GameState &state)
 				{
 					continue;
 				}
-				int maxAmount =
-				    config().getBool("OpenApoc.NewFeature.EnforceCargoLimits")
-				        ? std::min(e.second,
-				                   (v->getMaxCargo() - v->getCargo()) / e.first->store_space)
-				        : e.second;
+				int maxAmount = config().getBool("OpenApoc.NewFeature.EnforceCargoLimits")
+				                    ? std::min(e.second, (v->getMaxCargo() - v->getCargo()) /
+				                                             e.first->store_space)
+				                    : e.second;
 				if (maxAmount > 0)
 				{
 					e.second -= maxAmount;
@@ -3211,9 +3212,8 @@ void Battle::exitBattle(GameState &state)
 				}
 				int divisor = e.first->type == AEquipmentType::Type::Ammo ? e.first->max_ammo : 1;
 				int maxAmount = config().getBool("OpenApoc.NewFeature.EnforceCargoLimits")
-				                    ? std::min(e.second,
-				                               (v->getMaxCargo() - v->getCargo()) /
-				                                   e.first->store_space * divisor)
+				                    ? std::min(e.second, (v->getMaxCargo() - v->getCargo()) /
+				                                             e.first->store_space * divisor)
 				                    : e.second;
 				if (maxAmount > 0)
 				{
@@ -3270,11 +3270,10 @@ void Battle::exitBattle(GameState &state)
 					continue;
 				}
 				int divisor = e.first->type == AEquipmentType::Type::Ammo ? e.first->max_ammo : 1;
-				int maxAmount =
-				    config().getBool("OpenApoc.NewFeature.EnforceCargoLimits")
-				        ? std::min(e.second,
-				                   (v->getMaxBio() - v->getBio()) / e.first->store_space * divisor)
-				        : e.second;
+				int maxAmount = config().getBool("OpenApoc.NewFeature.EnforceCargoLimits")
+				                    ? std::min(e.second, (v->getMaxBio() - v->getBio()) /
+				                                             e.first->store_space * divisor)
+				                    : e.second;
 				if (maxAmount > 0)
 				{
 					e.second -= maxAmount;
@@ -3322,8 +3321,15 @@ void Battle::exitBattle(GameState &state)
 		v->cargo.emplace_front(
 		    state, StateRef<AEquipmentType>(&state, state.agent_equipment.begin()->first), 0, 0,
 		    nullptr, v->homeBuilding);
-		v->setMission(state, VehicleMission::gotoBuilding(state, *v));
-		v->addMission(state, VehicleMission::offerService(state, *v), true);
+		if (v->city.id == "CITYMAP_HUMAN")
+		{
+			v->setMission(state, VehicleMission::gotoBuilding(state, *v));
+			v->addMission(state, VehicleMission::offerService(state, *v), true);
+		}
+		else
+		{
+			v->setMission(state, VehicleMission::gotoPortal(state, *v));
+		}
 	}
 
 	// Event and result
@@ -3354,6 +3360,7 @@ void Battle::exitBattle(GameState &state)
 		case Battle::MissionType::AlienExtermination:
 		{
 			state.eventFromBattle = GameEventType::MissionCompletedBuildingNormal;
+			state.missionLocationBattle = state.current_battle->mission_location_id;
 			break;
 		}
 		case Battle::MissionType::BaseDefense:
@@ -3361,12 +3368,14 @@ void Battle::exitBattle(GameState &state)
 			if (state.current_battle->playerWon)
 			{
 				state.eventFromBattle = GameEventType::MissionCompletedBase;
+				state.missionLocationBattle = state.current_battle->mission_location_id;
 			}
 			else
 			{
 				auto building =
 				    StateRef<Building>{&state, state.current_battle->mission_location_id};
 				state.eventFromBattle = GameEventType::BaseDestroyed;
+				state.missionLocationBattle = state.current_battle->mission_location_id;
 				state.eventFromBattleText = building->base->name;
 				building->base->die(state, false);
 			}
@@ -3375,6 +3384,7 @@ void Battle::exitBattle(GameState &state)
 		case Battle::MissionType::RaidHumans:
 		{
 			state.eventFromBattle = GameEventType::MissionCompletedBuildingRaid;
+			state.missionLocationBattle = state.current_battle->mission_location_id;
 			if (state.current_battle->playerWon)
 			{
 				auto building =
@@ -3415,6 +3425,9 @@ void Battle::exitBattle(GameState &state)
 	}
 
 	state.current_battle = nullptr;
+
+	// Remove all dead vehicles from the state
+	state.cleanUpDeathNote();
 }
 
 void Battle::loadResources(GameState &state)
@@ -3524,7 +3537,7 @@ void Battle::loadImagePacks(GameState &state)
 				if (imagePacks.find(packName) == imagePacks.end())
 					imagePacks.insert(packName);
 			}
-			if (!brainsuckerFound && ae->getPayloadType()->damage_type &&
+			if (!brainsuckerFound && ae->getPayloadType() && ae->getPayloadType()->damage_type &&
 			    ae->getPayloadType()->damage_type->effectType ==
 			        DamageType::EffectType::Brainsucker)
 			{
@@ -3640,7 +3653,7 @@ void Battle::loadAnimationPacks(GameState &state)
 		{
 			for (auto &e : u.second->agent->equipment)
 			{
-				if (e->getPayloadType()->damage_type &&
+				if (e->getPayloadType() && e->getPayloadType()->damage_type &&
 				    e->getPayloadType()->damage_type->effectType ==
 				        DamageType::EffectType::Brainsucker)
 				{

@@ -8,6 +8,7 @@
 #include "game/state/city/vehiclemission.h"
 #include "game/state/gameevent.h"
 #include "game/state/gamestate.h"
+#include "game/state/rules/city/baselayout.h"
 #include "game/state/rules/city/scenerytiletype.h"
 #include "library/strings.h"
 
@@ -128,7 +129,7 @@ StateRef<Building> Organisation::getPurchaseBuilding(GameState &state,
 	std::list<StateRef<Building>> purchaseBuildings;
 	for (auto &b : buildings)
 	{
-		if (b->city == buyer->city && b != buyer && b->isAlive(state))
+		if (b->city == buyer->city && b != buyer && b->isAlive())
 		{
 			purchaseBuildings.push_back(b);
 		}
@@ -150,7 +151,7 @@ StateRef<Building> Organisation::getPurchaseBuilding(GameState &state,
 				}
 			}
 		}
-		return listRandomiser(state.rng, purchaseBuildings);
+		return pickRandom(state.rng, purchaseBuildings);
 	}
 }
 
@@ -326,8 +327,8 @@ void Organisation::updateMissions(GameState &state)
 		// Rescue owned
 		for (auto &v : state.vehicles)
 		{
-			if (v.second->city == rescueTransport->city && v.second->crashed &&
-			    !v.second->carriedByVehicle && v.second->owner.id == id)
+			if (v.second->city == rescueTransport->city && v.second->owner.id == id &&
+			    VehicleMission::canRecoverVehicle(state, *rescueTransport, *v.second))
 			{
 				bool foundRescuer = false;
 				for (auto &r : state.vehicles)
@@ -356,12 +357,12 @@ void Organisation::updateMissions(GameState &state)
 				}
 			}
 		}
-		// Rescue allies
+		// Rescue allies but not aliens
 		for (auto &v : state.vehicles)
 		{
-			if (v.second->city == rescueTransport->city && v.second->crashed &&
-			    !v.second->carriedByVehicle && v.second->owner.id != id &&
-			    isRelatedTo(v.second->owner) == Relation::Allied)
+			if (v.second->city == rescueTransport->city && v.second->owner != state.getAliens() &&
+			    v.second->owner.id != id && isRelatedTo(v.second->owner) == Relation::Allied &&
+			    VehicleMission::canRecoverVehicle(state, *rescueTransport, *v.second))
 			{
 				bool foundRescuer = false;
 				for (auto &r : state.vehicles)
@@ -402,8 +403,17 @@ void Organisation::updateHirableAgents(GameState &state)
 	StateRef<Building> hireeLocation;
 	if (state.getCivilian().id == id)
 	{
-		hireeLocation = {&state,
-		                 mapRandomizer(state.rng, state.cities["CITYMAP_HUMAN"]->buildings).first};
+		std::vector<StateRef<Building>> buildingsWithoutBases;
+		for (auto &b : state.cities["CITYMAP_HUMAN"]->buildings)
+		{
+			if (!b.second->base_layout)
+				buildingsWithoutBases.emplace_back(&state, b.second);
+		}
+		if (buildingsWithoutBases.empty())
+		{
+			LogError("Cannot spawn new hirable agent - No building without base?");
+		}
+		hireeLocation = pickRandom(state.rng, buildingsWithoutBases);
 	}
 	else
 	{
@@ -411,7 +421,7 @@ void Organisation::updateHirableAgents(GameState &state)
 		{
 			return;
 		}
-		hireeLocation = vectorRandomizer(state.rng, buildings);
+		hireeLocation = pickRandom(state.rng, buildings);
 	}
 	std::set<sp<Agent>> agentsToRemove;
 	for (auto &a : state.agents)
@@ -486,6 +496,11 @@ void Organisation::updateInfiltration(GameState &state)
 	org->infiltrationValue = clamp(org->infiltrationValue + infiltrationModifier, 0, 200);
 }
 
+void Organisation::updateDailyInfiltrationHistory()
+{
+	infiltrationHistory.push_front(this->infiltrationValue);
+}
+
 void Organisation::updateTakeOver(GameState &state, unsigned int ticks)
 {
 	ticksTakeOverAttemptAccumulated += ticks;
@@ -533,7 +548,7 @@ void Organisation::updateVehicleAgentPark(GameState &state)
 	//		}
 	//		buildingsRandomizer.push_back(b.second);
 	//	}
-	//	sp<Building> building = listRandomiser(state.rng, buildingsRandomizer);
+	//	sp<Building> building = pickRandom(state.rng, buildingsRandomizer);
 	//	while (countAgents < agentPark)
 	//	{
 	//		auto agent = state.agent_generator.createAgent(state, {&state, id},
@@ -595,7 +610,7 @@ void Organisation::updateVehicleAgentPark(GameState &state)
 				}
 			}
 
-			StateRef<Building> building = listRandomiser(state.rng, buildingsRandomizer);
+			StateRef<Building> building = pickRandom(state.rng, buildingsRandomizer);
 
 			auto v = building->city->placeVehicle(state, entry.first, {&state, id}, building);
 			v->homeBuilding = {&state, building};
@@ -640,23 +655,26 @@ Organisation::Relation Organisation::isRelatedTo(const StateRef<Organisation> &o
 {
 	float x = this->getRelationTo(other);
 	// FIXME: Make the thresholds read from serialized GameState?
-	if (x <= -50)
+	if (x < -50)
 	{
 		return Relation::Hostile;
 	}
-	else if (x <= -25)
+	else if (x < -25)
 	{
 		return Relation::Unfriendly;
 	}
-	else if (x >= 25)
+	else if (x < 25)
+	{
+		return Relation::Neutral;
+	}
+	else if (x < 75)
 	{
 		return Relation::Friendly;
 	}
-	else if (x >= 75)
+	else
 	{
 		return Relation::Allied;
 	}
-	return Relation::Neutral;
 }
 
 bool Organisation::isPositiveTo(const StateRef<Organisation> &other) const
@@ -671,7 +689,88 @@ bool Organisation::isNegativeTo(const StateRef<Organisation> &other) const
 	return x < 0;
 }
 
-sp<Organisation> Organisation::get(const GameState &state, const UString &id)
+/**
+ * Calculate the cost of a bribe
+ * @param other - other organisation
+ * @return - minimum sum of the bribe
+ */
+int Organisation::costOfBribeBy(const StateRef<Organisation> &other) const
+{
+	float improvement;
+	float x = this->getRelationTo(other);
+	if (x < -50) // Hostile
+	{
+		improvement = -50.0f - x;
+	}
+	else if (x < -25) // Unfriendly
+	{
+		improvement = -25.0f - x;
+	}
+	else if (x < 25) // Neutral
+	{
+		improvement = 25.0f - x;
+	}
+	else if (x < 75) // Friendly
+	{
+		improvement = 75.0f - x;
+	}
+	else // Allied (relationship cannot be improved)
+	{
+		return 0;
+	}
+
+	// The best approximation is 2030 * improvement + 19573
+	// but vanilla X-Com:
+	// 1. fond of numbers with 7 (27000, 37000 etc up to 127000)
+	// 2. often, for unknown reason, reduces the sum
+	// TODO: implement a more relevant formula
+	return 2000 * std::max((int)improvement, 1) + 25000;
+}
+
+/**
+ * The organisation is bribed by other org
+ * @param state - GameState
+ * @param other - other organisation
+ * @param bribe - sum of the bribe
+ * @return - true/false if success/fail
+ */
+bool Organisation::bribedBy(GameState &state, StateRef<Organisation> other, int bribe)
+{
+	if (bribe <= 0 || other->balance < bribe || bribe < costOfBribeBy(other))
+	{
+		return false;
+	}
+
+	float improvement;
+	float x = this->getRelationTo(other);
+	if (x < -50) // Hostile
+	{
+		improvement = -50.0f - x;
+	}
+	else if (x < -25) // Unfriendly
+	{
+		improvement = -25.0f - x;
+	}
+	else if (x < 25) // Neutral
+	{
+		improvement = 25.0f - x;
+	}
+	else if (x < 75) // Friendly
+	{
+		improvement = 75.0f - x;
+	}
+	else // Allied (relationship cannot be improved)
+	{
+		return false;
+	}
+
+	other->balance -= bribe;
+	adjustRelationTo(state, other, improvement);
+	return true;
+}
+
+template <>
+sp<Organisation> StateObject<Organisation>::get(const GameState &state, const UString &id)
 {
 	auto it = state.organisations.find(id);
 	if (it == state.organisations.end())
@@ -682,12 +781,12 @@ sp<Organisation> Organisation::get(const GameState &state, const UString &id)
 	return it->second;
 }
 
-const UString &Organisation::getPrefix()
+template <> const UString &StateObject<Organisation>::getPrefix()
 {
 	static UString prefix = "ORG_";
 	return prefix;
 }
-const UString &Organisation::getTypeName()
+template <> const UString &StateObject<Organisation>::getTypeName()
 {
 	static UString name = "Organisation";
 	return name;
@@ -721,7 +820,7 @@ void Organisation::Mission::execute(GameState &state, StateRef<City> city,
 		std::list<StateRef<Building>> spaceports;
 		for (auto &b : city->spaceports)
 		{
-			if (b->isAlive(state))
+			if (b->isAlive())
 			{
 				bool intactPad = false;
 				for (auto &p : b->landingPadLocations)
@@ -743,11 +842,11 @@ void Organisation::Mission::execute(GameState &state, StateRef<City> city,
 		{
 			return;
 		}
-		auto linerType = setRandomiser(state.rng, pattern.allowedTypes);
+		auto linerType = pickRandom(state.rng, pattern.allowedTypes);
 		auto liner = city->placeVehicle(state, linerType, owner,
 		                                VehicleMission::getRandomMapEdgeCoordinates(state, city));
 
-		auto building = listRandomiser(state.rng, spaceports);
+		auto building = pickRandom(state.rng, spaceports);
 		liner->homeBuilding = building;
 		liner->setMission(state, VehicleMission::gotoBuilding(state, *liner));
 		return;
@@ -770,7 +869,7 @@ void Organisation::Mission::execute(GameState &state, StateRef<City> city,
 			}
 		}
 	}
-	if (availableVehicles.size() == 0)
+	if (availableVehicles.empty())
 	{
 		// None available to take mission
 		return;
@@ -790,7 +889,7 @@ void Organisation::Mission::execute(GameState &state, StateRef<City> city,
 		}
 	}
 	// Pick one with highest count
-	if (buildingsRandomizer.size() == 0)
+	if (buildingsRandomizer.empty())
 	{
 		count = maxSeenCount;
 		for (auto &e : availableVehicles)
@@ -801,7 +900,7 @@ void Organisation::Mission::execute(GameState &state, StateRef<City> city,
 			}
 		}
 	}
-	auto sourceBuilding = listRandomiser(state.rng, buildingsRandomizer);
+	auto sourceBuilding = pickRandom(state.rng, buildingsRandomizer);
 
 	// Special case
 	if (pattern.target == Organisation::MissionPattern::Target::DepartToSpace)
@@ -859,12 +958,12 @@ void Organisation::Mission::execute(GameState &state, StateRef<City> city,
 		}
 		buildingsRandomizer.push_back(b.second);
 	}
-	if (buildingsRandomizer.size() == 0)
+	if (buildingsRandomizer.empty())
 	{
 		return;
 	}
 
-	auto destBuilding = listRandomiser(state.rng, buildingsRandomizer);
+	auto destBuilding = pickRandom(state.rng, buildingsRandomizer);
 
 	// Do it
 	while (count-- > 0)
